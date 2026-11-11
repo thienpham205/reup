@@ -1,0 +1,12 @@
+yt-dlp
+faster-whisper
+av<19  # av 19 bỏ tham số metadata_errors mà faster-whisper 1.2 vẫn dùng
+edge-tts
+deep-translator
+pydub
+requests
+gTTS
+playwright
+flask
+Pillow
+piper-tts  # giọng đọc mã nguồn mở, chạy offline (tuỳ chọn Piper / Edge + Piper)
