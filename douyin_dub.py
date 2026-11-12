@@ -247,15 +247,32 @@ def download_ytdlp(url, out_path, cookies_browser=None):
            "--merge-output-format", "mp4", "-o", str(out_path), "--no-playlist", "--force-overwrites"]
     if cookies_browser:
         cmd += ["--cookies-from-browser", cookies_browser]
-    run(cmd + [url])
-    return ""
+    try:
+        out = run(cmd + ["--print", "title", "--no-simulate", url])  # in tiêu đề video (đặt tên file, ảnh bìa)
+    except RuntimeError as e:  # chỉ giữ dòng ERROR của yt-dlp, không in cả câu lệnh
+        errs = [l.replace("ERROR:", "").strip() for l in str(e).splitlines() if l.startswith("ERROR")]
+        raise RuntimeError("Không tải được video: " + (errs[-1][:300] if errs else str(e)[-300:])) from None
+    title = next((l.strip() for l in reversed(out.splitlines()) if l.strip()), "")
+    if title:
+        log(f"Tiêu đề: {title[:80]}")
+    return title
+
+
+def normalize_url(url):
+    """Đưa link về dạng yt-dlp hiểu: Bilibili bản tiếng Anh / di động (bilibili.com/en/video/..., m.bilibili.com)
+    -> www.bilibili.com/video/...; bỏ tham số theo dõi."""
+    m = re.search(r"bilibili\.com/(?:[a-z]{2}/)?video/(BV\w+|av\d+)", url)
+    if m:
+        p = re.search(r"[?&]p=(\d+)", url)  # giữ số tập (p=2...) của video nhiều phần
+        return f"https://www.bilibili.com/video/{m.group(1)}" + (f"?p={p.group(1)}" if p else "")
+    return url
 
 
 def download(src, workdir, cookies_browser=None):
     if os.path.isfile(src):
         log("Dùng file video có sẵn")
         return Path(src).resolve(), Path(src).stem
-    url = extract_url(src)
+    url = normalize_url(extract_url(src))
     out = workdir / "original.mp4"
     log(f"Đang tải: {url}")
     title = ""
@@ -281,7 +298,7 @@ def download(src, workdir, cookies_browser=None):
         else:
             raise RuntimeError(f"Không tải được video Douyin. Kiểm tra link còn xem được không rồi thử lại. ({errors[0]})")
     else:
-        download_ytdlp(url, out, cookies_browser)
+        title = download_ytdlp(url, out, cookies_browser)
     log(f"Đã tải xong ({os.path.getsize(out) / 1e6:.1f} MB)")
     return out, title
 
@@ -338,33 +355,27 @@ def transcribe(video, workdir, model_name, lang, hint=""):
     wav_pad = workdir / "audio16k_pad.wav"
     run(["ffmpeg", "-y", "-i", str(wav), "-af", f"adelay={int(PAD * 1000)}", "-ac", "1", "-ar", "16000", str(wav_pad)])
     log(f"Nhận dạng giọng nói (model {model_name}, lần đầu sẽ tải model)...")
-    model = load_whisper(model_name)
-    segments, info = model.transcribe(
-        str(wav_pad), language=lang, vad_filter=True, beam_size=5,
-        # VAD nhạy hơn mặc định: giọng trẻ con / nói nhỏ trên nền nhạc hay bị cắt mất
-        # (0.1 bắt được cả tiếng gọi ngắn như "小姑"; câu ảo giác sinh ra từ nhạc nền được lọc bằng HALLUCINATIONS)
-        vad_parameters={"min_silence_duration_ms": 400, "threshold": 0.1, "speech_pad_ms": 500},
-        word_timestamps=True,  # lấy thời gian từng chữ -> không bị lệch qua khoảng lặng
-        condition_on_previous_text=False,  # giảm lỗi lặp câu
-        repetition_penalty=1.1,
-        # KHÔNG đưa tiêu đề video vào gợi ý: Whisper hay chép lại nó vào đầu mọi câu (lỗi "lọt prompt"),
-        # làm hỏng cả đoạn. Chữ nghe nhầm đã có bước dịch AI sửa theo ngữ cảnh.
-        initial_prompt="以下是普通话的句子，使用简体中文。" if lang == "zh" else None,
-    )
     title_norm = _norm(re.sub(r"#\S+", "", hint or ""))
-    segs = []
-    for s in segments:
-        for line in split_by_words(s):
-            line["start"] = round(max(0.0, line["start"] - PAD), 2)
-            line["end"] = round(max(line["start"] + 0.2, line["end"] - PAD), 2)
-            # phòng hờ: bỏ phần tiêu đề / câu gợi ý nếu model vẫn chép vào lời thoại
-            line["zh"] = strip_leak(line["zh"], title_norm)
-            if not _norm(line["zh"]) or is_hallucination(line["zh"]):
-                continue
-            if drop_repeats(segs + [line]) != segs + [line]:
-                continue
-            segs.append(line)
-            print(f"   {line['start']:6.1f}s  {line['zh']}", flush=True)
+    # Máy thiếu RAM / bộ nhớ ảo (ổ C đầy thì Windows không nới được bộ nhớ ảo) -> báo "failed to allocate memory".
+    # Thử lại ít luồng hơn (ít bộ đệm hơn), rồi tới model nhỏ hơn, thay vì dừng cả video.
+    tries = [(model_name, 0), (model_name, 4)] + ([("small", 4)] if model_name not in ("tiny", "base", "small") else [])
+    for k, (name, threads) in enumerate(tries):
+        try:
+            model = load_whisper(name) if not threads else WhisperModel(name, device="cpu", compute_type="int8",
+                                                                         cpu_threads=threads)
+            segs = _asr(model, wav_pad, lang, PAD, title_norm)
+            break
+        except (RuntimeError, MemoryError) as e:
+            if not re.search(r"alloc|memory", str(e), re.I) or k == len(tries) - 1:
+                raise
+            model = None
+            import gc
+
+            gc.collect()
+            nxt = tries[k + 1]
+            log(f"Thiếu bộ nhớ khi nhận dạng giọng nói -> thử lại với model {nxt[0]}, {nxt[1]} luồng"
+                + (" (kém chính xác hơn; hãy giải phóng ổ C / RAM rồi chạy lại nếu muốn bản chính xác)"
+                   if nxt[0] != model_name else ""))
     n0 = len(segs)
     # cao độ giọng từng câu: để không gộp nhầm lời của 2 người khác nhau thành 1 câu
     import wave
@@ -379,6 +390,35 @@ def transcribe(video, workdir, model_name, lang, hint=""):
     for s in segs:  # đo lại sau khi gộp: dùng để AI biết câu nào giọng nam / nữ / trẻ con
         s["f0"] = estimate_f0(pcm, s["start"], s["end"])
     log(f"Được {len(segs)} câu" + (f" (gộp {n0 - len(segs)} câu vụn)" if n0 > len(segs) else ""))
+    return segs
+
+
+def _asr(model, wav_pad, lang, PAD, title_norm):
+    segments, info = model.transcribe(
+        str(wav_pad), language=lang, vad_filter=True, beam_size=5,
+        # VAD nhạy hơn mặc định: giọng trẻ con / nói nhỏ trên nền nhạc hay bị cắt mất
+        # (0.1 bắt được cả tiếng gọi ngắn như "小姑"; câu ảo giác sinh ra từ nhạc nền được lọc bằng HALLUCINATIONS)
+        vad_parameters={"min_silence_duration_ms": 400, "threshold": 0.1, "speech_pad_ms": 500},
+        word_timestamps=True,  # lấy thời gian từng chữ -> không bị lệch qua khoảng lặng
+        condition_on_previous_text=False,  # giảm lỗi lặp câu
+        repetition_penalty=1.1,
+        # KHÔNG đưa tiêu đề video vào gợi ý: Whisper hay chép lại nó vào đầu mọi câu (lỗi "lọt prompt"),
+        # làm hỏng cả đoạn. Chữ nghe nhầm đã có bước dịch AI sửa theo ngữ cảnh.
+        initial_prompt="以下是普通话的句子，使用简体中文。" if lang == "zh" else None,
+    )
+    segs = []
+    for s in segments:
+        for line in split_by_words(s):
+            line["start"] = round(max(0.0, line["start"] - PAD), 2)
+            line["end"] = round(max(line["start"] + 0.2, line["end"] - PAD), 2)
+            # phòng hờ: bỏ phần tiêu đề / câu gợi ý nếu model vẫn chép vào lời thoại
+            line["zh"] = strip_leak(line["zh"], title_norm)
+            if not _norm(line["zh"]) or is_hallucination(line["zh"]):
+                continue
+            if drop_repeats(segs + [line]) != segs + [line]:
+                continue
+            segs.append(line)
+            print(f"   {line['start']:6.1f}s  {line['zh']}", flush=True)
     return segs
 
 
@@ -1141,6 +1181,19 @@ def tts_all(jobs, voice, workers=4):
     default = voice if isinstance(voice, tuple) else (voice, 0, 0)
     spec = [j[2] if len(j) > 2 and j[2] else default for j in jobs]
     done = [False] * len(jobs)
+    vn = [i for i, s in enumerate(spec) if str(s[0]).startswith("vieneu:")]
+    if vn:  # VieNeu: đọc hết trong một tiến trình (tải model một lần); câu lỗi thì đọc bằng Edge cùng giới tính
+        import vieneu_tts
+
+        got = vieneu_tts.speak_all([(jobs[i][0], jobs[i][1], spec[i][0][7:]) for i in vn], log,
+                                   progress=lambda a, b: print(f"   {a}/{len(jobs)}", end="\r", flush=True))
+        for n, i in enumerate(vn):
+            if n in got:
+                done[i] = True
+            else:
+                spec[i] = (MALE if spec[i][0][7:] in vieneu_tts.VOICES["male"] else FEMALE, 0, 0)
+        if len(got) < len(vn):
+            log(f"VieNeu không đọc được {len(vn) - len(got)} câu -> đọc bằng giọng Edge")
     pip = [i for i, s in enumerate(spec) if str(s[0]).startswith("piper:")]
     if pip:  # giọng Piper chạy offline trên máy; câu nào lỗi thì đọc lại bằng Edge cùng giới tính
         import piper_tts
@@ -1467,7 +1520,7 @@ def has_audio(video):
 
 
 def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edge", gem_fixed="",
-        el_voice="", el_model="v3", bg_file=None, keep_text=False):
+        el_voice="", el_model="v3", bg_file=None, keep_text=False, vn_voice=""):
     """bg_file: đường dẫn nhạc nền đã tách giọng (chưa có thì tách rồi lưu vào đó). keep_text: không rút gọn câu
     (người dùng đã tự sửa lời) -> câu dài chỉ đọc nhanh hơn."""
     import wave
@@ -1491,6 +1544,26 @@ def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edg
             log("Giọng Edge thêm: " + ", ".join(
                 f"{'trẻ con' if a == 'child' else 'nam' if g == 'male' else 'nữ'} #{k + 1} = {v[0].split('-')[2].replace('MultilingualNeural', '')}"
                 for (g, a, k), v in pick.items()))
+    if tts == "vieneu":
+        import vieneu_tts
+
+        if vieneu_tts.ensure(log):
+            pk = vieneu_tts.Picker(vn_voice)
+            keys = [s.get("vkey") or ("male", "adult", 0) for s in segs if s.get("vi", "").strip()]
+            if multi and keys:
+                pk.set_main(tuple(max(set(map(tuple, keys)), key=list(map(tuple, keys)).count)))
+            for s in segs:
+                if multi:
+                    g, age, k = s.get("vkey") or ("male", "adult", 0)
+                    s["voice"] = ("vieneu:" + pk.get(g, age, k), 0, 0)
+                else:
+                    s["voice"] = ("vieneu:" + (pk.main or vieneu_tts.DEFAULT["male" if voice == MALE else "female"]), 0, 0)
+            used = sorted({s["voice"][0][7:] for s in segs if s.get("vi", "").strip()})
+            log("Giọng VieNeu: " + (", ".join(
+                f"{'trẻ con' if a == 'child' else 'nam' if g == 'male' else 'nữ'} #{k + 1} = {v}"
+                for (g, a, k), v in pk.map.items() if v in used) if multi and pk.map else ", ".join(used)))
+        else:
+            log("Không dùng được VieNeu -> dùng giọng Edge")
     if tts in ("piper", "mix"):
         import piper_tts
 
@@ -1848,7 +1921,7 @@ BG_FILE = "nhacnen.m4a"  # nhạc nền đã tách giọng (dùng lại khi lồ
 SEG_KEYS = ("start", "end", "end0", "zh", "vi", "who", "voice", "vkey", "emo", "spoken")
 
 
-def save_segs(outdir, base, video, segs, chars):
+def save_segs(outdir, base, video, segs, chars, **extra):
     video = Path(video)
     name = video.name if video.parent.resolve() == Path(outdir).resolve() else str(video)
     voice_of = {}  # nhân vật -> (giọng, vkey) dùng nhiều nhất, để đổi người nói cho một câu trên web
@@ -1863,7 +1936,7 @@ def save_segs(outdir, base, video, segs, chars):
         chars.append({"id": cid, "name": f"Người nói {n + 1}", "gender": g, "age": "adult"})
     data = {"base": base, "video": name, "chars": chars,
             "char_voice": {cid: {"voice": list(v), "vkey": list(k)} for cid, (v, k) in cv.items()},
-            "segs": [{k: s[k] for k in SEG_KEYS if k in s} for s in segs]}
+            "segs": [{k: s[k] for k in SEG_KEYS if k in s} for s in segs], **extra}
     (Path(outdir) / SEGS_FILE).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
@@ -1884,7 +1957,8 @@ def main():
     ap.add_argument("--eleven-voice", default="", help="ID giọng ElevenLabs cho người nói nhiều nhất (trống = tự chọn)")
     ap.add_argument("--eleven-model", choices=["v3", "flash"], default="v3",
                     help="Model ElevenLabs: v3 (hay nhất, 1 credit/ký tự) / flash (0,5 credit/ký tự)")
-    ap.add_argument("--tts", choices=["edge", "edgeplus", "gemini", "eleven", "piper", "mix"], default="edge",
+    ap.add_argument("--vieneu-voice", default="", help="Giọng VieNeu cho người nói nhiều nhất (trống = tự chọn)")
+    ap.add_argument("--tts", choices=["edge", "edgeplus", "gemini", "eleven", "piper", "mix", "vieneu"], default="edge",
                     help="Bộ đọc: edge (miễn phí, 2 giọng) / gemini (giọng AI nhiều giọng, có cảm xúc; dùng key Gemini) / "
                          "piper (mã nguồn mở, offline, nhiều giọng) / mix (Edge cho vai chính + Piper cho các vai khác)")
     ap.add_argument("--gemini-voice", default="", choices=[""] + GEMINI_PICK,
@@ -1908,6 +1982,9 @@ def main():
                     help="Tách hẳn giọng gốc khỏi nhạc nền (giữ nhạc + tiếng động, bỏ giọng Trung). Chậm thêm ~1 phút/phút video")
     ap.add_argument("--redub", action="store_true",
                     help="Lồng lại từ lời thoại đã lưu (segs.json trong -o, có thể đã sửa tay); bỏ qua tải/nghe/dịch")
+    ap.add_argument("--rerender", action="store_true",
+                    help="Chỉ xuất lại video (bật/tắt phụ đề, cỡ chữ...) từ video gốc + tiếng Việt đã lồng; "
+                         "không đọc giọng lại")
     args = ap.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -1920,12 +1997,13 @@ def main():
     bg_file = outdir / BG_FILE if args.separate else None
     try:
         ai_cfg = None if args.no_ai else load_ai_config()
-        if args.redub:
+        if args.redub or args.rerender:
             saved = json.loads((outdir / SEGS_FILE).read_text(encoding="utf-8"))
             base, video = saved["base"], outdir / saved["video"]
             if not video.is_file():
-                sys.exit("Không còn video gốc để lồng lại (file gốc đã bị xoá).")
-            log(f"Lồng lại từ lời thoại đã sửa ({len(saved['segs'])} câu)")
+                sys.exit("Không còn video gốc để làm tiếp (file gốc đã bị xoá).")
+            log(f"Xuất lại video từ bản đã lồng tiếng ({len(saved['segs'])} câu)" if args.rerender
+                else f"Lồng lại từ lời thoại đã lưu ({len(saved['segs'])} câu)")
             total = media_duration(video)
             segs = saved["segs"]
             for s in segs:
@@ -1934,6 +2012,9 @@ def main():
                     if s.get(k):
                         s[k] = tuple(s[k])
             chars = saved.get("chars") or []
+            if args.redub and not args.no_dub and args.voice == "auto" and not all(s.get("voice") for s in segs):
+                log("Video này trước chưa lồng tiếng nên chưa chia giọng theo nhân vật -> dùng một giọng nữ")
+                args.voice = "nu"
         else:
             video, title = download(args.source, workdir, args.cookies_from_browser)
             base = safe_name(title, f"douyin_{os.getpid()}")
@@ -1952,10 +2033,18 @@ def main():
             save_segs(outdir, base, video, segs, chars)
 
         audio = None
-        if not args.no_dub:
+        old_out = outdir / f"{base}.vi.mp4"
+        if args.rerender:
+            if not args.no_dub:  # dùng lại tiếng Việt đã lồng trong video cũ
+                if not old_out.is_file():
+                    sys.exit("Chưa có video đã lồng tiếng để xuất lại. Hãy chọn Lồng lại giọng đọc.")
+                audio = workdir / "dub_audio.m4a"
+                run(["ffmpeg", "-y", "-i", str(old_out), "-map", "0:a:0", "-c:a", "copy", str(audio)])
+        elif not args.no_dub:
             audio = dub(segs, video, workdir, VOICES.get(args.voice, args.voice), args.bg_volume, args.max_speed, ai_cfg,
                         tts=args.tts, gem_fixed=args.gemini_voice,
-                        el_voice=args.eleven_voice, el_model=args.eleven_model, bg_file=bg_file, keep_text=args.redub)
+                        el_voice=args.eleven_voice, el_model=args.eleven_model, bg_file=bg_file, keep_text=args.redub,
+                        vn_voice=args.vieneu_voice)
         for s in segs:
             s.setdefault("end0", s["end"])
         fit_subtitle_times(segs, total)
@@ -1971,10 +2060,13 @@ def main():
             log(f"Phát hiện phụ đề in cứng ở {band[0]:.0%}-{band[1]:.0%} chiều cao -> làm mờ" if band
                 else "Không thấy phụ đề in cứng trong video gốc")
 
-        out_path = outdir / f"{base}.vi.mp4"
+        out_path = old_out
         log("Đang xuất video..." if burn else "Đang xuất video (giữ nguyên hình gốc, chỉ thay tiếng)...")
-        render(video, "sub.srt", audio, out_path, workdir, args.font_size, burn, band, speech_intervals(segs))
-        save_segs(outdir, base, video, segs, chars)
+        part = workdir / "out.mp4"  # xuất ra file tạm rồi mới thay -> lỗi giữa chừng không mất video cũ
+        render(video, "sub.srt", audio, part, workdir, args.font_size, burn, band, speech_intervals(segs))
+        part.replace(out_path)
+        # ghi lại video chính đã ghép phụ đề Việt chưa + dải chữ Trung -> bản dọc kèm phụ đề TikTok không bị hai lớp chữ
+        save_segs(outdir, base, video, segs, chars, burned=bool(burn), band=list(band) if band else None)
         log(f"XONG! -> {out_path}")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

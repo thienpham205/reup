@@ -19,6 +19,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_from_directory
 
 import notify
+import vieneu_tts
 import postfx
 import publish_kit
 import social
@@ -58,7 +59,7 @@ STEPS = [
 MAX_BATCH = 50
 GEMINI_PICK = ("Aoede", "Kore", "Zephyr", "Leda", "Despina", "Charon", "Puck", "Orus", "Fenrir", "Algenib")
 PUBLIC = ("id", "source", "title", "status", "step", "created", "finished", "options", "files", "error", "progress",
-          "queue_pos", "kit", "posts", "watch", "redub", "edited")
+          "queue_pos", "kit", "posts", "watch", "redub", "rerender", "edited")
 
 
 def save(job):
@@ -82,8 +83,8 @@ def load_jobs():
                 j["status"], j["error"] = "error", "Server đã tắt khi đang xử lý. Hãy chạy lại."
             if j.get("kit") == "running":
                 j["kit"] = ""
-            if j.get("redub") and j.get("status") == "error":  # đang lồng lại thì tắt -> video cũ vẫn còn
-                j["redub"] = False
+            if (j.get("redub") or j.get("rerender")) and j.get("status") == "error":  # đang làm tiếp thì tắt -> video cũ vẫn còn
+                j["redub"] = j["rerender"] = False
                 if find_files(d).get("video"):
                     j["status"], j["error"] = "done", ""
             for post in j.get("posts") or []:  # bài hẹn giờ ("scheduled") giữ nguyên, tới giờ sẽ tự đăng
@@ -109,6 +110,8 @@ def find_files(job_dir):
             out["srt_zh"] = n
         elif n == publish_kit.COVER_FILE:
             out["cover"] = n
+        elif n == publish_kit.TIKTOK_COVER:
+            out["cover_tiktok"] = n
         elif n == "segs.json":
             out["segs"] = n
     return out
@@ -139,6 +142,8 @@ def run_job(job):
            "--font-size", str(opt["font_size"]), "--tts", opt.get("tts", "edge")]
     if opt.get("tts") == "gemini" and opt.get("gemini_voice"):
         cmd += ["--gemini-voice", opt["gemini_voice"]]
+    if opt.get("tts") == "vieneu" and opt.get("vieneu_voice"):
+        cmd += ["--vieneu-voice", opt["vieneu_voice"]]
     if opt.get("tts") == "eleven":
         cmd += ["--eleven-model", opt.get("eleven_model", "v3")]
         if opt.get("eleven_voice"):
@@ -153,13 +158,17 @@ def run_job(job):
         cmd.append("--separate")
     if opt.get("translator", "auto") != "auto":
         cmd += ["--translator", opt["translator"]]
-    redub = bool(job.get("redub"))
+    rerender = bool(job.get("rerender"))
+    redub = bool(job.get("redub")) or rerender  # cả hai đều là "làm tiếp" từ lời thoại đã lưu
     started = time.time()
-    if redub:
+    if rerender:
+        cmd.append("--rerender")
+    elif redub:
         cmd.append("--redub")
     env = dict(os.environ, PYTHONIOENCODING="utf-8", HF_HUB_DISABLE_SYMLINKS_WARNING="1")
     with lock:
-        job.update(status="running", step="dub" if redub else "download", error="", progress="")
+        job.update(status="running", step="render" if rerender else "dub" if redub else "download",
+                   error="", progress="")
     save(job)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                          encoding="utf-8", errors="replace", env=env, cwd=str(ROOT),
@@ -202,15 +211,19 @@ def run_job(job):
                 job["step"], job["progress"] = "finish", ""
 
         try:
-            postfx.finish(jdir, video, opt.get("vertical", "off"), brand, flog, vsubs=opt.get("vsubs", False))
+            postfx.finish(jdir, video, opt.get("vertical", "off"), brand, flog, vsubs=opt.get("vsubs", False),
+                           burned=bool(opt.get("burn")))
         except Exception as e:  # lỗi hoàn thiện không làm hỏng video đã lồng tiếng
             flog(f"Không hoàn thiện được video: {str(e)[:300]}")
     with lock:
         job["finished"] = time.time()
         job["files"] = find_files(jdir)
-        job["redub"] = False
+        job["redub"] = job["rerender"] = False
         if job.get("status") == "cancelled":
-            pass
+            if redub and job["files"].get("video"):  # huỷ giữa lúc làm tiếp -> video cũ vẫn còn, dùng tiếp được
+                job.update(status="done", step="done", error="")
+                job["log"].append("Đã huỷ làm tiếp, giữ video trước đó.")
+                code = -1  # không báo "xong" qua Telegram
         elif code == 0 and job["files"].get("video"):
             job["status"], job["step"] = "done", "done"
             job["edited"] = False
@@ -222,8 +235,8 @@ def run_job(job):
             job["error"] = re.sub(r"^\w+Error:\s*", "", msg)[:400]
     save(job)
     mins = (job["finished"] - started) / 60
-    if job["status"] == "done":
-        notify.send("job_done", f"✅ {'Đã lồng lại' if redub else 'Xong video'}: {job_title(job)}\n"
+    if job["status"] == "done" and code != -1:
+        notify.send("job_done", f"✅ {'Đã xuất lại' if rerender else 'Đã lồng lại' if redub else 'Xong video'}: {job_title(job)}\n"
                                 f"(mất {mins:.0f} phút) - xem ở http://localhost:{PORT}")
     elif job["status"] == "error":
         notify.send("job_error", f"❌ Lỗi video: {job_title(job)}\n{job.get('error', '')[:300]}")
@@ -384,7 +397,8 @@ def parse_options(f):
     model = f.get("model", "medium")
     return {
         "voice": f.get("voice") if f.get("voice") in ("auto", "nam", "nu") else "auto",
-        "tts": f.get("tts") if f.get("tts") in ("gemini", "eleven", "piper", "mix", "edgeplus") else "edge",
+        "tts": f.get("tts") if f.get("tts") in ("gemini", "eleven", "piper", "mix", "edgeplus", "vieneu", "edge") else "vieneu",
+        "vieneu_voice": f.get("vieneu_voice") if f.get("vieneu_voice") in vieneu_tts.ALL else "",
         "translator": f.get("translator") if f.get("translator") in ("google", "hunyuan") else "auto",
         "eleven_voice": f.get("eleven_voice", "") if re.fullmatch(r"[A-Za-z0-9]{8,40}", f.get("eleven_voice", "")) else "",
         "eleven_model": "flash" if f.get("eleven_model") == "flash" else "v3",
@@ -409,7 +423,11 @@ def cancel_job(jid):
         job = jobs.get(jid) or abort(404)
         if job["status"] not in ("queued", "running"):
             return jsonify(public(job))
+        was_queued = job["status"] == "queued"
         job.update(status="cancelled", error="Đã huỷ", finished=time.time())
+        if was_queued and (job.get("redub") or job.get("rerender")) and find_files(JOBS_DIR / jid).get("video"):
+            # huỷ việc làm tiếp chưa kịp chạy -> video cũ vẫn nguyên
+            job.update(status="done", step="done", error="", redub=False, rerender=False)
     p = procs.get(jid)
     if p:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True) if os.name == "nt" else p.kill()
@@ -457,7 +475,7 @@ def edit_kit(jid):
     if not kit or not kit.get("frames"):
         return jsonify(error="Chưa có bộ đăng bài. Hãy bấm Tạo."), 409
     body = request.get_json(force=True) or {}
-    before = (kit.get("frame"), kit.get("cover_text"), kit.get("style"))
+    before = (kit.get("frame"), kit.get("cover_text"), kit.get("style"), kit.get("ratio"), kit.get("badge"), kit.get("logo", True))
     if "title" in body:
         kit["title"] = str(body["title"]).strip()[:200]
     if "description" in body:
@@ -468,12 +486,18 @@ def edit_kit(jid):
         kit["cover_text"] = str(body["cover_text"]).strip()[:120]
     if body.get("style") in publish_kit.STYLES:
         kit["style"] = body["style"]
+    if body.get("ratio") in publish_kit.COVER_RATIOS:
+        kit["ratio"] = body["ratio"]
+    if "logo" in body:
+        kit["logo"] = bool(body["logo"])
+    if "badge" in body:
+        kit["badge"] = re.sub(r"\s+", " ", str(body["badge"] or "")).strip()[:30]
     if "frame" in body:
         try:
             kit["frame"] = min(max(int(body["frame"]), 0), len(kit["frames"]) - 1)
         except (TypeError, ValueError):
             pass
-    if before != (kit.get("frame"), kit.get("cover_text"), kit.get("style")):
+    if before != (kit.get("frame"), kit.get("cover_text"), kit.get("style"), kit.get("ratio"), kit.get("badge"), kit.get("logo", True)):
         publish_kit.render_cover(jdir, kit)
         kit["rev"] = int(kit.get("rev", 0)) + 1
     publish_kit.save_kit(jdir, kit)
@@ -805,18 +829,48 @@ def redub_job(jid):
     if not (JOBS_DIR / jid / data["video"]).is_file():
         return jsonify(error="Video gốc đã bị xoá nên không lồng lại được."), 409
     body = request.get_json(silent=True) or {}
+    return queue_redo(job, "dub", {k: body[k] for k in ("tts", "separate") if k in body})
+
+
+# các tuỳ chọn mà đổi thì phải đọc giọng lại; còn lại (phụ đề, cỡ chữ, bản dọc, logo) chỉ cần xuất lại video
+DUB_KEYS = ("dub", "voice", "tts", "separate", "bg_volume", "gemini_voice", "eleven_voice", "eleven_model", "vieneu_voice")
+REDO_KEYS = DUB_KEYS + ("burn", "cover", "font_size", "vertical", "vsubs", "brand", "kit")
+
+
+def queue_redo(job, mode, changes):
+    """Làm tiếp một video đã xong / lỗi với tuỳ chọn mới, không tải / nghe / dịch lại.
+    mode: "render" (giữ tiếng đã lồng, chỉ xuất lại hình) hoặc "dub" (đọc giọng lại rồi xuất)."""
     with lock:
         if job["status"] in ("queued", "running"):
             return jsonify(error="Video đang xử lý."), 409
-        if body.get("tts") in ("edge", "edgeplus", "gemini", "eleven", "piper", "mix"):
-            job["options"]["tts"] = body["tts"]
-        if "separate" in body:
-            job["options"]["separate"] = bool(body["separate"])
-        job.update(status="queued", redub=True, error="")
-        job["log"].append("—— Lồng lại theo lời thoại đã sửa ——")
+        old = job["options"]
+        new = parse_options({**old, **{k: v for k, v in changes.items() if k in REDO_KEYS}})
+        new = {**old, **new}
+        if mode != "dub" and any(new.get(k) != old.get(k) for k in DUB_KEYS if k != "dub") and new["dub"]:
+            mode = "dub"  # đổi giọng / tách giọng -> bắt buộc đọc lại
+        if mode != "dub" and new["dub"] and not old.get("dub"):
+            mode = "dub"  # trước chỉ làm phụ đề, giờ bật lồng tiếng
+        if mode != "dub" and not find_files(JOBS_DIR / job["id"]).get("video"):
+            mode = "dub"  # chưa từng xuất xong -> không có tiếng đã lồng để dùng lại
+        job["options"] = new
+        job.update(status="queued", redub=mode == "dub", rerender=mode != "dub", error="")
+        job["log"].append("—— Lồng lại giọng đọc ——" if mode == "dub" else "—— Xuất lại video với tuỳ chọn mới ——")
     save(job)
-    work_q.put(jid)
+    work_q.put(job["id"])
     return jsonify(public(job)), 202
+
+
+@app.post("/api/jobs/<jid>/redo")
+def redo_job(jid):
+    """body: {mode: render|dub, options: {burn, font_size, cover, vertical, vsubs, brand, dub, tts, voice, separate, ...}}"""
+    job = jobs.get(jid) or abort(404)
+    data = read_segs(jid)
+    if not data:
+        return jsonify(error="Video này làm từ bản cũ, chưa lưu lời thoại nên không làm tiếp được. Hãy chạy lại từ đầu."), 409
+    if not (JOBS_DIR / jid / data["video"]).is_file():
+        return jsonify(error="Video gốc đã bị xoá nên không làm tiếp được."), 409
+    body = request.get_json(silent=True) or {}
+    return queue_redo(job, "dub" if body.get("mode") == "dub" else "render", body.get("options") or {})
 
 
 # ------------------------------------------------------------------ tự đăng (kênh theo dõi)

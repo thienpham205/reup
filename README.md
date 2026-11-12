@@ -71,8 +71,15 @@ Kết quả nằm trong thư mục `output/`:
 
 Video xử lý xong, tool tự tạo luôn (tắt được bằng công tắc **Tự tạo ảnh bìa, tiêu đề, hashtag**):
 
-- **Ảnh bìa** (`cover.jpg`): lấy 6 khung hình trong video, chọn khung nét nhất rồi in chữ tiêu đề lên.
-  Trên web đổi được khung hình, kiểu chữ (chữ đậm / hộp màu / không chữ) và nội dung chữ.
+- **Ảnh bìa** (`cover.jpg`): xét 16 khung hình, chấm điểm theo độ nét, màu sắc và mặt người, giữ 8 khung đẹp nhất
+  để chọn. Ảnh được tăng màu, làm nét, làm mờ dải phụ đề Trung in sẵn, rồi in chữ tiêu đề lên. Trên web chọn được:
+  - **Mẫu bìa**: Chữ nổi (chữ to viền đen, nghiêng nhẹ, kiểu bìa TikTok) / Poster (ảnh đóng khung trên nền mờ) /
+    Hộp màu / Nền tối / Không chữ.
+  - **Khổ ảnh**: tự động theo video, 16:9 (YouTube, Facebook), 9:16 (TikTok, Reels, Shorts), 1:1.
+  - **Bìa TikTok** (`cover_tiktok.jpg`, tạo kèm mỗi lần vẽ bìa): dọc 9:16, chữ và logo nằm trong vùng 3:4 ở giữa,
+    vì trang cá nhân TikTok cắt bìa thành 3:4. Đăng TikTok nên dùng bản dọc 9:16 + bìa này; bìa ngang sẽ mất chữ hai bên.
+  - **Chữ trên bìa**: bọc từ muốn tô vàng trong dấu sao, ví dụ `Cái kết *không ai ngờ*`. Có key AI thì AI tự chọn từ nhấn.
+  - **Logo kênh**: tự gắn logo của bạn (đè lên logo kênh cũ nếu dò thấy). **Nhãn góc trái**: tuỳ chọn, ví dụ "Tập 1".
 - **Tiêu đề, mô tả, hashtag**: có key AI thì AI đọc lời thoại và viết 3 tiêu đề để chọn; không có key thì
   tạo theo mẫu đơn giản. Sửa trực tiếp trên web, bấm **Sao chép tất cả** để dán lúc đăng.
 
@@ -119,6 +126,12 @@ Dán nhiều link vào ô link (mỗi dòng một link, hoặc dán liền nhi�
 - **Logo / chữ ký**: đặt ở trang **Cài đặt** (ảnh logo PNG, chữ như `@tenkenh`, góc, cỡ, độ đậm; có ảnh xem trước),
   rồi bật "Gắn logo / chữ ký" khi tạo video. Logo gắn vào cả bản gốc lẫn bản dọc; ở bản dọc logo tránh mép trên/dưới
   nơi TikTok, Reels đặt nút bấm.
+- **Logo kênh cũ có sẵn trong video** (Cài đặt → Logo & chữ ký): tool tự dò logo đứng yên ở góc đã chọn (bắt được cả
+  logo chữ mờ) rồi:
+  - **Đè logo tôi lên** (mặc định): logo của bạn đặt đúng chỗ, đủ to để che kín logo cũ.
+  - **Xoá logo cũ**: lấp vùng logo bằng màu xung quanh (`delogo`), rồi đặt logo của bạn ở góc. Chỗ xoá có thể nhoè.
+  - **Giữ nguyên**: không đụng tới logo cũ.
+  Video làm trước đó: mở thẻ **Làm tiếp ⟳**, bật **Gắn logo** rồi bấm Làm tiếp.
 
 ## Dịch offline bằng Hunyuan-MT (mã nguồn mở)
 
@@ -132,6 +145,19 @@ llama.cpp (~25 MB) và model nén Q4_K_M (~4,6 GB, bản của mradermacher trê
 - Không phân vai nhân vật như dịch bằng AI có key (giọng đoán theo cao độ giọng gốc), không viết tiêu đề.
 - **Tự động** = AI nếu có API key, không thì Google. Có key Gemini (miễn phí) thì AI vẫn là lựa chọn tốt nhất.
 
+## Giọng VieNeu (tự nhiên nhất, offline)
+
+Bộ đọc **VieNeu ✨** dùng [VieNeu-TTS v3 Turbo](https://github.com/pnnbao97/VieNeu-TTS) (Apache 2.0): giọng Việt
+48 kHz rất tự nhiên, 25 giọng dựng sẵn (nam / nữ, giọng Bắc / Trung / Nam, kiểu tự nhiên / kể chuyện / tin tức).
+Chạy ngay trên máy bằng CPU, không cần mạng, không tốn tiền; nhanh khoảng 2 lần thời gian thực (video 3 phút đọc mất
+khoảng 2 phút).
+
+- Mỗi nhân vật tự nhận một giọng theo giới tính / tuổi (cần key AI để phân vai). Chọn giọng ở ô bên dưới thì giọng đó
+  dành cho nhân vật nói nhiều nhất.
+- Lần đầu tool tự cài VieNeu vào môi trường Python riêng `<thư mục dữ liệu>/models/vieneu-venv` (~1 GB), không đụng
+  tới thư viện của tool. Câu nào VieNeu lỗi thì tự đọc bằng Edge.
+- Video đã làm xong: thẻ **Làm tiếp ⟳** → bật **Lồng lại giọng đọc** → chọn **VieNeu ✨**.
+
 ## Thêm giọng: Edge nhiều giọng
 
 Bộ đọc **Edge nhiều giọng**: vai chính dùng 2 giọng tiếng Việt của Edge (HoaiMy, NamMinh), mỗi vai phụ một giọng
@@ -142,6 +168,19 @@ Gemini, ElevenLabs.
 
 Khi máy chủ Edge lỗi mãi (hay gặp lỗi 503 tạm thời), câu đó tự đọc bằng Piper chạy trên máy thay vì dừng cả video.
 Video lỗi ở bước lồng tiếng có nút **Lồng lại (giữ bản dịch)**: không phải tải / nghe / dịch lại.
+
+## Làm tiếp video đã xong (không dán link lại)
+
+Quên bật phụ đề, quên làm bản dọc hay logo? Mở video trong Lịch sử, chọn thẻ **Làm tiếp ⟳**, bật các bước muốn thêm
+rồi bấm **Làm tiếp**:
+
+- **Xuất video**: bật / tắt ghép phụ đề Việt, che phụ đề Trung, đổi cỡ chữ. Dùng lại tiếng đã lồng nên chỉ mất
+  khoảng 1 phút.
+- **Bản dọc 9:16** (nền mờ / cắt giữa), kèm phụ đề kiểu TikTok, và **logo / chữ ký**.
+- **Giọng đọc**: lồng lại với bộ đọc khác hoặc tách hẳn giọng gốc (đọc lại toàn bộ nên chậm hơn). Video trước chỉ
+  làm phụ đề thì bật được lồng tiếng ở đây.
+
+Tool dùng lại video gốc và bản dịch đã lưu, không tải / nghe / dịch lại. Huỷ giữa chừng thì video cũ vẫn còn nguyên.
 
 ## Sửa lời thoại rồi lồng lại
 
