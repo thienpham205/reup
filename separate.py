@@ -7,6 +7,7 @@ cùng Piper), không cần PyTorch. Kết quả là phần "nền" = âm thanh g
 
     python separate.py video.mp4 nen.wav
 """
+import os
 import subprocess
 import sys
 import time
@@ -94,8 +95,17 @@ def _write(x, dst):
         raise RuntimeError(r.stderr.decode("utf-8", "replace")[-300:])
 
 
+def _encode(raw, dst):
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "s16le", "-ar", str(SR), "-ac", "2", "-i", str(raw),
+                        str(dst)], capture_output=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace")[-300:])
+
+
 def separate(src, dst_bg, dst_vocals=None, log=print, threads=0):
-    """Ghi phần nền (nhạc + tiếng động, không còn giọng nói) của src ra dst_bg."""
+    """Ghi phần nền (nhạc + tiếng động, không còn giọng nói) của src ra dst_bg.
+    Âm thanh giải mã ra file tạm trên ổ đĩa rồi đọc dần từng khúc (np.memmap): phim 2 tiếng cũng chỉ tốn vài trăm MB
+    RAM thay vì ~8 GB. Kết quả giống hệt cách đọc cả file vào bộ nhớ (mỗi khúc vẫn lấy đủ phần đệm TRIM hai bên)."""
     import onnxruntime as ort
 
     so = ort.SessionOptions()
@@ -105,26 +115,47 @@ def separate(src, dst_bg, dst_vocals=None, log=print, threads=0):
     if threads:
         so.intra_op_num_threads = threads
     sess = ort.InferenceSession(str(ensure(log)), so, providers=["CPUExecutionProvider"])
-    mix = _read(src)
-    n = mix.shape[1]
-    pad = GEN - n % GEN
-    mixp = np.concatenate([np.zeros((2, TRIM), np.float32), mix, np.zeros((2, pad + TRIM), np.float32)], axis=1)
-    starts = list(range(0, n + pad, GEN))
-    voc = []
-    t0 = time.time()
-    for k, i in enumerate(starts):
-        spec = _stft(mixp[:, i:i + CHUNK])[None]
-        # chạy model với cả phổ đảo dấu rồi lấy trung bình -> bớt nhiễu (cách "denoise" của UVR)
-        pred = (sess.run(None, {"input": spec})[0] - sess.run(None, {"input": -spec})[0]) * 0.5
-        voc.append(_istft(pred[0])[:, TRIM:-TRIM])
-        if k == 0 or (k + 1) % 5 == 0 or k + 1 == len(starts):
-            el = time.time() - t0
-            log(f"  tách giọng {k + 1}/{len(starts)} đoạn ({el:.0f}s)")
-    vocals = np.concatenate(voc, axis=1)[:, :n] * COMPENSATE
-    bg = mix - vocals
-    _write(bg, dst_bg)
-    if dst_vocals:
-        _write(vocals, dst_vocals)
+    tmp = Path(dst_bg).resolve().parent
+    raw_in = tmp / "_sep_in.f32"
+    raw_bg, raw_voc = tmp / "_sep_bg.s16", tmp / "_sep_voc.s16"
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "2", "-ar", str(SR),
+                            "-f", "f32le", str(raw_in)], capture_output=True)
+        if r.returncode or not raw_in.is_file() or raw_in.stat().st_size < 8:
+            raise RuntimeError("Không đọc được âm thanh để tách giọng")
+        mix = np.memmap(raw_in, dtype=np.float32, mode="r").reshape(-1, 2)
+        n = mix.shape[0]
+        starts = list(range(0, n, GEN))
+        t0 = time.time()
+        with open(raw_bg, "wb") as fb, (open(raw_voc, "wb") if dst_vocals else open(os.devnull, "wb")) as fv:
+            for k, i in enumerate(starts):
+                # đoạn mix[i - TRIM : i + GEN + TRIM], ngoài phạm vi file thì đệm 0 (như bản cũ)
+                a, b = i - TRIM, i + GEN + TRIM
+                seg = np.zeros((2, CHUNK), np.float32)
+                lo, hi = max(a, 0), min(b, n)
+                seg[:, lo - a:hi - a] = mix[lo:hi].T
+                spec = _stft(seg)[None]
+                # chạy model với cả phổ đảo dấu rồi lấy trung bình -> bớt nhiễu (cách "denoise" của UVR)
+                pred = (sess.run(None, {"input": spec})[0] - sess.run(None, {"input": -spec})[0]) * 0.5
+                m = min(GEN, n - i)
+                voc = _istft(pred[0])[:, TRIM:TRIM + m] * COMPENSATE
+                bg = seg[:, TRIM:TRIM + m] - voc
+                fb.write((np.clip(bg.T, -1, 1) * 32767).astype(np.int16).tobytes())
+                if dst_vocals:
+                    fv.write((np.clip(voc.T, -1, 1) * 32767).astype(np.int16).tobytes())
+                if k == 0 or (k + 1) % 5 == 0 or k + 1 == len(starts):
+                    el = time.time() - t0
+                    log(f"  tách giọng {k + 1}/{len(starts)} đoạn ({el:.0f}s)")
+        del mix
+        _encode(raw_bg, dst_bg)
+        if dst_vocals:
+            _encode(raw_voc, dst_vocals)
+    finally:
+        for f in (raw_in, raw_bg, raw_voc):
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass
     return dst_bg
 
 

@@ -837,7 +837,7 @@ def _budget(segs, i, total):
     return max(3, int(avail * VI_SYLLABLES_PER_SEC))
 
 
-def ai_translate(segs, cfg, title, total, chunk=60, context=8, chars=None, address=None):
+def ai_translate(segs, cfg, title, total, chunk=60, context=8, chars=None, address=None, gloss=None):
     log(f"Dịch bằng AI ({cfg['provider']} / {cfg['model']})...")
     clean_title = re.sub(r"#\S+", "", title or "").strip() or "(không rõ)"
     names = {c["id"]: c["name"] for c in (chars or [])}
@@ -848,6 +848,9 @@ def ai_translate(segs, cfg, title, total, chunk=60, context=8, chars=None, addre
                    + "\n" + "\n".join(f"- {names.get(a['from'], a['from'])} nói với {names.get(a['to'], a['to'])}: "
                                       f"tự xưng \"{a['self']}\", gọi \"{a['call']}\"" for a in (address or []))
                    + "\n\n")
+    if gloss:
+        profile += ("BẢNG TÊN RIÊNG (bắt buộc dịch đúng như sau, kể cả khi tên nằm trong câu):\n"
+                    + "\n".join(f"- {a} = {b}" for a, b in gloss) + "\n\n")
     done = 0
     for c0 in range(0, len(segs), chunk):
         idx = list(range(c0, min(c0 + chunk, len(segs))))
@@ -921,7 +924,60 @@ def enforce_address(segs, address):
         log(f"  Sửa xưng hô mày/tao theo bảng ở {fixed} câu")
 
 
+CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def load_glossary():
+    """Bảng tên riêng (Cài đặt -> Bảng tên): mỗi dòng "tên gốc = tên Việt". Tên gốc chữ Trung: dùng khi dịch;
+    tên gốc chữ Việt (vd "Tiểu Tân = Shin"): sửa lại trong bản dịch."""
+    try:
+        text = json.loads(CONFIG_PATH.read_text(encoding="utf-8")).get("glossary") or ""
+    except Exception:
+        return []
+    out = []
+    for ln in str(text).splitlines():
+        if "=" in ln:
+            a, b = (x.strip() for x in ln.split("=", 1))
+            if a and b:
+                out.append((a, b))
+    return sorted(out, key=lambda x: -len(x[0]))  # tên dài thay trước (小新爸爸 trước 小新)
+
+
+def apply_glossary_vi(segs, gloss):
+    """Sau khi dịch: thay tên Trung còn sót và tên Việt bị dịch sai theo bảng."""
+    for s in segs:
+        v = s.get("vi") or ""
+        for a, b in gloss:
+            if CJK_RE.search(a):
+                v = v.replace(a, b)
+            else:
+                v = re.sub(r"(?<!\w)" + re.escape(a) + r"(?!\w)", b, v, flags=re.I)
+        v = v.strip()
+        s["vi"] = v[:1].upper() + v[1:]  # tên thay vào đầu câu -> vẫn viết hoa chữ đầu
+
+
 def translate(segs, src_lang, title="", total=0, ai_cfg=None, translator="auto"):
+    """Dịch rồi áp bảng tên riêng (nếu có). Trả về (characters, address) như _translate."""
+    gloss = load_glossary()
+    zh_terms = [(a, b) for a, b in gloss if CJK_RE.search(a)]
+    if not gloss:
+        return _translate(segs, src_lang, title, total, ai_cfg, translator)
+    log(f"Dùng bảng tên riêng ({len(gloss)} tên)")
+    orig = [s["zh"] for s in segs]
+    if translator != "auto" or not ai_cfg:  # Google / Hunyuan: thay tên Trung bằng tên Việt ngay trong câu gốc
+        for s in segs:
+            for a, b in zh_terms:
+                s["zh"] = s["zh"].replace(a, f" {b} ")
+    try:
+        res = _translate(segs, src_lang, title, total, ai_cfg, translator, gloss=zh_terms)
+    finally:
+        for s, z in zip(segs, orig):
+            s["zh"] = z
+    apply_glossary_vi(segs, gloss)
+    return res
+
+
+def _translate(segs, src_lang, title="", total=0, ai_cfg=None, translator="auto", gloss=None):
     """Dịch; trả về (characters, address) nếu AI phân tích được nhân vật (dùng để chọn giọng).
     translator: auto (AI nếu có key, không thì Google) / google / hunyuan (Hunyuan-MT chạy offline trên máy)."""
     chars, address = [], []
@@ -952,7 +1008,7 @@ def translate(segs, src_lang, title="", total=0, ai_cfg=None, translator="auto")
         except Exception as e:
             log(f"Không phân tích được nhân vật ({str(e)[:120]}), dịch không có bảng xưng hô")
         try:
-            ai_translate(segs, ai_cfg, title, total, chars=chars, address=address)
+            ai_translate(segs, ai_cfg, title, total, chars=chars, address=address, gloss=gloss)
             enforce_address(segs, address)
             missing = [s for s in segs if not s.get("vi")]
             if missing:
@@ -1520,7 +1576,7 @@ def has_audio(video):
 
 
 def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edge", gem_fixed="",
-        el_voice="", el_model="v3", bg_file=None, keep_text=False, vn_voice=""):
+        el_voice="", el_model="v3", bg_file=None, keep_text=False, vn_voice="", music=None):
     """bg_file: đường dẫn nhạc nền đã tách giọng (chưa có thì tách rồi lưu vào đó). keep_text: không rút gọn câu
     (người dùng đã tự sửa lời) -> câu dài chỉ đọc nhanh hơn."""
     import wave
@@ -1730,12 +1786,18 @@ def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edg
         w.setframerate(SR)
         w.writeframes(np.clip(track, -32768, 32767).astype(np.int16).tobytes())
 
+    return mix_audio(video, voice_wav, workdir, bg_volume, bg_file, music)
+
+
+def mix_audio(video, voice_wav, workdir, bg_volume, bg_file=None, music=None):
+    """Trộn giọng Việt với nền: nhạc thay thế (music) / nền đã tách giọng (bg_file) / tiếng gốc vặn nhỏ khi có
+    thoại. Trả về file m4a đã chuẩn hoá độ to."""
     mixed = workdir / "mixed.m4a"
     if not has_audio(video):
         run(["ffmpeg", "-y", "-i", str(voice_wav), "-c:a", "aac", "-b:a", "192k", str(mixed)])
         return mixed
     src = video
-    if bg_file:  # đã tách giọng: nền chỉ còn nhạc + tiếng động -> giữ to, chỉ hạ nhẹ khi giọng Việt nói
+    if bg_file and not music:  # đã tách giọng: nền chỉ còn nhạc + tiếng động -> giữ to, chỉ hạ nhẹ khi giọng Việt nói
         bg_file = Path(bg_file)
         if not bg_file.is_file():
             log("Tách giọng Trung khỏi nhạc nền (giữ nhạc + tiếng động)...")
@@ -1760,8 +1822,15 @@ def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edg
                 bg_file = None
         else:
             log("Dùng lại nhạc nền đã tách")
-    if bg_file:
+    src_in = ["-i", str(src)]
+    if music:  # thay hẳn nền gốc bằng nhạc: lặp cho đủ dài, nhỏ xuống khi giọng Việt nói, tắt dần ở cuối
+        total = media_duration(video)
+        src_in = ["-stream_loop", "-1", "-t", f"{total:.2f}", "-i", str(music)]
+        bg = (f"[orig]volume=0.30,afade=t=out:st={max(0.0, total - 2.5):.2f}:d=2.5[mu];"
+              "[mu][sc]sidechaincompress=threshold=0.02:ratio=4:attack=20:release=450:makeup=1[bg]")
+    elif bg_file:
         src = bg_file
+        src_in = ["-i", str(src)]
         bg = "[orig][sc]sidechaincompress=threshold=0.01:ratio=2:attack=20:release=400:makeup=1[bg]"
     # Chỉ vặn nhỏ tiếng gốc KHI giọng Việt đang nói (sidechain ducking);
     # lúc không có thoại thì giữ nguyên nhạc nền / tiếng động của video gốc.
@@ -1775,7 +1844,7 @@ def dub(segs, video, workdir, voice, bg_volume, max_speed, ai_cfg=None, tts="edg
         bg = f"[orig][sc]sidechaincompress=threshold=0.003:ratio={ratio:.2f}:attack=15:release=350:makeup=1[bg]"
     mix_wav = workdir / "mix.wav"
     run([
-        "ffmpeg", "-y", "-i", str(src), "-i", str(voice_wav), "-filter_complex",
+        "ffmpeg", "-y", *src_in, "-i", str(voice_wav), "-filter_complex",
         "[1:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[sc][vo];"
         "[0:a]aresample=48000,aformat=channel_layouts=stereo[orig];"
         f"{bg};[vo]volume=1.5[vo2];"
@@ -1917,6 +1986,9 @@ def render(video, srt_name, audio, out_path, workdir, font_size, burn, band=None
 
 
 SEGS_FILE = "segs.json"  # lời thoại + giọng từng câu, để sửa trên web rồi lồng lại
+VOICE_ONLY = "giong_viet.m4a"  # chỉ giọng Việt (chưa trộn nền) -> đổi nhạc / nền không phải đọc lại
+DUB_AUDIO = "long_tieng.m4a"  # tiếng đã lồng (giọng Việt + nền), để xuất lại video không phải đọc lại
+ASR_FILE = "asr.json"  # kết quả nghe tiếng Trung (để chạy tiếp khi lỗi ở bước dịch / lồng tiếng)
 BG_FILE = "nhacnen.m4a"  # nhạc nền đã tách giọng (dùng lại khi lồng lại)
 SEG_KEYS = ("start", "end", "end0", "zh", "vi", "who", "voice", "vkey", "emo", "spoken")
 
@@ -1985,6 +2057,9 @@ def main():
     ap.add_argument("--rerender", action="store_true",
                     help="Chỉ xuất lại video (bật/tắt phụ đề, cỡ chữ...) từ video gốc + tiếng Việt đã lồng; "
                          "không đọc giọng lại")
+    ap.add_argument("--music", default="", help="File nhạc thay cho nền gốc (bỏ hẳn tiếng gốc, kể cả tiếng động)")
+    ap.add_argument("--resume", action="store_true",
+                    help="Chạy tiếp job bị lỗi / tắt giữa chừng: bỏ qua các bước đã xong (tải, nghe, dịch)")
     args = ap.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -1995,6 +2070,26 @@ def main():
     # thư mục làm việc nằm trong thư mục kết quả (tránh lỗi TEMP khác nhau khi chạy từ web)
     workdir = Path(tempfile.mkdtemp(prefix="_tmp_", dir=outdir))
     bg_file = outdir / BG_FILE if args.separate else None
+    keep_text = args.redub  # lời đã được người dùng sửa tay -> không cho AI rút gọn
+    asr_file = outdir / ASR_FILE
+    cached = None  # kết quả nghe đã lưu (chạy tiếp)
+    if args.resume and not (args.redub or args.rerender):
+        try:
+            saved = json.loads((outdir / SEGS_FILE).read_text(encoding="utf-8"))
+            if saved.get("segs") and (outdir / saved["video"]).is_file():
+                log("Chạy tiếp: đã có bản dịch -> bỏ qua tải / nghe / dịch, chỉ lồng tiếng và xuất video")
+                args.redub = True
+        except Exception:
+            pass
+        if not args.redub and asr_file.is_file():
+            try:
+                cached = json.loads(asr_file.read_text(encoding="utf-8"))
+                if not (outdir / cached["video"]).is_file() and not Path(cached["video"]).is_file():
+                    cached = None
+                else:
+                    log(f"Chạy tiếp: đã nghe xong ({len(cached['segs'])} câu) -> bỏ qua tải / nghe, dịch tiếp")
+            except Exception:
+                cached = None
     try:
         ai_cfg = None if args.no_ai else load_ai_config()
         if args.redub or args.rerender:
@@ -2016,15 +2111,30 @@ def main():
                 log("Video này trước chưa lồng tiếng nên chưa chia giọng theo nhân vật -> dùng một giọng nữ")
                 args.voice = "nu"
         else:
-            video, title = download(args.source, workdir, args.cookies_from_browser)
-            base = safe_name(title, f"douyin_{os.getpid()}")
-            if Path(video).parent == workdir:  # giữ video gốc ngay, để lỗi ở bước sau vẫn lồng lại được
-                shutil.move(str(video), outdir / f"{base}.goc.mp4")
-                video = outdir / f"{base}.goc.mp4"
+            goc = next(iter(outdir.glob("*.goc.mp4")), None) if args.resume else None
+            if cached:
+                base, title, segs = cached["base"], cached.get("title", ""), cached["segs"]
+                video = outdir / cached["video"] if (outdir / cached["video"]).is_file() else Path(cached["video"])
+            elif goc:  # đã tải xong video lần trước
+                log("Chạy tiếp: dùng video đã tải lần trước")
+                video, base = goc, goc.name[:-len(".goc.mp4")]
+                title = base
+            else:
+                video, title = download(args.source, workdir, args.cookies_from_browser)
+                base = safe_name(title, f"douyin_{os.getpid()}")
+                if Path(video).parent == workdir:  # giữ video gốc ngay, để lỗi ở bước sau vẫn lồng lại được
+                    shutil.move(str(video), outdir / f"{base}.goc.mp4")
+                    video = outdir / f"{base}.goc.mp4"
             total = media_duration(video)
-            segs = transcribe(video, workdir, args.model, args.lang, title)
-            if not segs:
-                sys.exit("Không nhận dạng được lời thoại nào trong video.")
+            if cached:  # cần bản 16 kHz để đoán giọng nam / nữ từng nhân vật
+                run(["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", str(workdir / "audio16k.wav")])
+            if not cached:
+                segs = transcribe(video, workdir, args.model, args.lang, title)
+                if not segs:
+                    sys.exit("Không nhận dạng được lời thoại nào trong video.")
+                vname = video.name if Path(video).parent.resolve() == outdir else str(video)
+                asr_file.write_text(json.dumps({"base": base, "title": title, "video": vname, "segs": segs},
+                                               ensure_ascii=False), encoding="utf-8")
             if not ai_cfg and not args.no_ai and args.translator == "auto":
                 log("Chưa cài API key AI -> dịch bằng Google Dịch (kém tự nhiên hơn). Xem README để bật dịch AI.")
             chars, _ = translate(segs, args.lang, title, total, ai_cfg, args.translator)
@@ -2035,16 +2145,28 @@ def main():
         audio = None
         old_out = outdir / f"{base}.vi.mp4"
         if args.rerender:
-            if not args.no_dub:  # dùng lại tiếng Việt đã lồng trong video cũ
-                if not old_out.is_file():
+            if not args.no_dub:  # dùng lại tiếng Việt đã lồng (file riêng; bản cũ thì lấy từ video cũ)
+                if (outdir / VOICE_ONLY).is_file():  # trộn lại giọng Việt với nền / nhạc theo tuỳ chọn mới
+                    log("Trộn lại giọng Việt với " + ("nhạc nền mới" if args.music else "nền của video"))
+                    audio = mix_audio(video, outdir / VOICE_ONLY, workdir, args.bg_volume, bg_file, args.music or None)
+                    shutil.copyfile(audio, outdir / DUB_AUDIO)
+                elif (outdir / DUB_AUDIO).is_file():
+                    audio = outdir / DUB_AUDIO
+                elif old_out.is_file():
+                    audio = workdir / "dub_audio.m4a"
+                    run(["ffmpeg", "-y", "-i", str(old_out), "-map", "0:a:0", "-c:a", "copy", str(audio)])
+                else:
                     sys.exit("Chưa có video đã lồng tiếng để xuất lại. Hãy chọn Lồng lại giọng đọc.")
-                audio = workdir / "dub_audio.m4a"
-                run(["ffmpeg", "-y", "-i", str(old_out), "-map", "0:a:0", "-c:a", "copy", str(audio)])
         elif not args.no_dub:
             audio = dub(segs, video, workdir, VOICES.get(args.voice, args.voice), args.bg_volume, args.max_speed, ai_cfg,
                         tts=args.tts, gem_fixed=args.gemini_voice,
-                        el_voice=args.eleven_voice, el_model=args.eleven_model, bg_file=bg_file, keep_text=args.redub,
-                        vn_voice=args.vieneu_voice)
+                        el_voice=args.eleven_voice, el_model=args.eleven_model, bg_file=bg_file, keep_text=keep_text,
+                        vn_voice=args.vieneu_voice, music=args.music or None)
+        if audio and not args.rerender:
+            shutil.copyfile(audio, outdir / DUB_AUDIO)
+            if (workdir / "voice_vi.wav").is_file():
+                run(["ffmpeg", "-y", "-i", str(workdir / "voice_vi.wav"), "-c:a", "aac", "-b:a", "160k",
+                     str(outdir / VOICE_ONLY)])
         for s in segs:
             s.setdefault("end0", s["end"])
         fit_subtitle_times(segs, total)

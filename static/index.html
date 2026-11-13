@@ -208,6 +208,18 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
 .kcover{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:start;padding-bottom:16px;border-bottom:1px solid var(--line)}
 @container (max-width:360px){.kcover{grid-template-columns:minmax(0,1fr)}.cover{max-width:200px}}
 .cover{width:100%;border-radius:12px;display:block;background:var(--panel2);border:1px solid var(--line)}
+.stsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stbox{display:flex;flex-direction:column;gap:2px}
+.stbox b{font-size:26px;line-height:1.1}
+.stbox small,.stbox span{color:var(--muted);font-size:12.5px}
+.strow .stnum{display:flex;flex-direction:column;align-items:flex-end;min-width:58px}
+.strow .stnum b{font-size:15px}
+.strow .stnum small{color:var(--muted);font-size:11.5px}
+.parts{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.parts h4{margin:0 0 8px;font-size:14px}
+.prow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 0;border-top:1px solid var(--line)}
+.prow:first-of-type{border-top:0}
+.prow small{color:var(--muted)}
 .frames{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;margin:0 0 10px}
 @container (max-width:520px){.frames{grid-template-columns:repeat(4,1fr)}}
 #kStyle,#kRatio{margin-bottom:8px}
@@ -277,6 +289,7 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
     <button class="nav" data-view="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.500-3.500"/></svg>Tìm video</button>
     <button class="nav" data-view="watch"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.500-6.500 9.500-6.500S21.500 12 21.500 12 18 18.500 12 18.500 2.500 12 2.500 12z"/><circle cx="12" cy="12" r="3"/></svg>Theo dõi kênh<span class="cnt" id="watchCnt" hidden>0</span></button>
     <button class="nav" data-view="accounts"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.4 3.2-5.5 6.5-5.5s5.900 2.100 6.500 5.500M16 4.800a3.500 3.500 0 0 1 0 6.400M18.500 14.800c1.700.800 2.800 2.600 3 5.200"/></svg>Tài khoản<span class="cnt" id="accCnt" hidden>0</span></button>
+    <button class="nav" data-view="stats"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Thống kê</button>
     <button class="nav" data-view="settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.400 13.500a7.700 7.700 0 0 0 0-3l2-1.500-2-3.500-2.400 1a7.600 7.600 0 0 0-2.600-1.500L14 2.500h-4l-.4 2.500A7.600 7.600 0 0 0 7 6.500l-2.400-1-2 3.500 2 1.500a7.700 7.700 0 0 0 0 3l-2 1.500 2 3.500 2.400-1a7.600 7.600 0 0 0 2.600 1.500l.4 2.500h4l.4-2.500a7.600 7.600 0 0 0 2.600-1.500l2.400 1 2-3.500z"/></svg>Cài đặt</button>
     <div class="grow"></div>
     <div class="sidefoot">
@@ -373,7 +386,17 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
                 <div class="hint" id="vertHint">Chỉ xuất video gốc như cũ</div>
               </div>
               <label class="switch" id="vsubsRow"><span>Phụ đề kiểu TikTok trên bản dọc</span><input type="checkbox" id="vsubs"><i></i></label>
+              <div class="opt">
+                <label class="t">Cắt video dài thành nhiều phần (TikTok)</label>
+                <div class="seg" data-name="split"><button type="button" data-v="0" class="on">Không</button><button type="button" data-v="1">1 phút</button><button type="button" data-v="2">2 phút</button><button type="button" data-v="3">3 phút</button><button type="button" data-v="5">5 phút</button><button type="button" data-v="10">10 phút</button></div>
+                <div class="hint">Mỗi phần dài khoảng chừng ấy, cắt ở chỗ hết câu thoại; có nhãn "PHẦN 1/3", lời nhắc "xem tiếp phần sau" và bìa "Tập 1, 2…" riêng. Video ngắn hơn thì không cắt.</div>
+              </div>
               <div class="hint" id="vsubsHint" style="margin-top:-6px">Chữ to giữa khung, từng từ sáng dần theo giọng đọc. Chỉ thêm vào bản dọc.</div>
+              <div class="opt">
+                <label class="t" for="music">Nhạc nền</label>
+                <select class="inp" id="music"><option value="">Giữ nhạc / tiếng nền gốc</option><option value="random">Thay bằng nhạc trong thư viện (ngẫu nhiên)</option><option value="vui">Thay nhạc: Vui nhộn</option><option value="nhenhang">Thay nhạc: Nhẹ nhàng</option><option value="hoihop">Thay nhạc: Hồi hộp</option><option value="camdong">Thay nhạc: Cảm động</option></select>
+                <div class="hint" id="musicHint">Thay nhạc: bỏ hẳn tiếng gốc (cả nhạc lẫn tiếng động), chỉ còn giọng Việt + nhạc bạn đưa vào <a href="#settings">thư viện nhạc</a>. Giúp tránh trùng nhạc có bản quyền.</div>
+              </div>
               <label class="switch"><span>Tách hẳn giọng Trung, giữ nhạc nền</span><input type="checkbox" id="separate"><i></i></label>
               <div class="hint" style="margin-top:-6px">Bỏ hẳn giọng gốc, nhạc và tiếng động giữ nguyên độ to. Chậm thêm khoảng 1 phút cho mỗi phút video.</div>
               <label class="switch"><span>Gắn logo / chữ ký</span><input type="checkbox" id="brand"><i></i></label>
@@ -512,6 +535,23 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
       </div>
     </section>
 
+    <section class="view" id="view-stats" hidden>
+      <div class="vhead">
+        <div><h1>Thống kê video đã đăng</h1><p>Lượt xem, thích, bình luận của các video tool đã đăng lên YouTube, Facebook, TikTok. Số liệu tự lấy lại mỗi 15 phút khi mở trang này.</p></div>
+        <button class="btn" id="stReload" type="button">↻ Lấy số liệu mới</button>
+      </div>
+      <div class="stsum" id="stSum"></div>
+      <div class="card pad" style="margin-top:16px">
+        <div class="row wrapr" style="justify-content:space-between;margin-bottom:8px">
+          <h2 style="margin:0">Từng video</h2>
+          <div class="row"><select class="inp" id="stPlat" style="width:auto" aria-label="Nền tảng"><option value="">Mọi nền tảng</option><option value="youtube">YouTube</option><option value="facebook">Facebook</option><option value="tiktok">TikTok</option></select>
+          <select class="inp" id="stSort" style="width:auto" aria-label="Sắp xếp"><option value="views">Nhiều lượt xem nhất</option><option value="likes">Nhiều thích nhất</option><option value="posted">Mới đăng nhất</option></select></div>
+        </div>
+        <div id="stList"><div class="empty">Đang tải…</div></div>
+        <div class="hint" id="stHint"></div>
+      </div>
+    </section>
+
     <!-- ================= CÀI ĐẶT ================= -->
     <section class="view" id="view-settings" hidden>
       <div class="vhead"><div><h1>Cài đặt</h1><p>Khoá API cho dịch thuật và viết tiêu đề. Mọi khoá chỉ lưu trên máy này.</p></div></div>
@@ -570,10 +610,33 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
               <div class="seg" id="brandOld"><button type="button" data-v="cover">Đè logo tôi lên</button><button type="button" data-v="remove">Xoá logo cũ</button><button type="button" data-v="keep">Giữ nguyên</button></div>
               <div class="hint" id="brandOldHint"></div>
             </div>
+            <div class="opt">
+              <label class="switch" style="margin:0"><span>Đoạn mở đầu 2 giây có logo kênh</span><input type="checkbox" id="brandIntro"><i></i></label>
+              <label class="switch" style="margin:6px 0 0"><span>Lời nhắc ở 4 giây cuối video</span><input type="checkbox" id="brandOutroOn"><i></i></label>
+              <input class="inp" id="brandOutro" maxlength="60" placeholder="Follow kênh để xem thêm video hay" style="margin-top:6px">
+              <div class="hint">Áp dụng khi bật "Gắn logo / chữ ký" cho video. Video cắt nhiều phần: mỗi phần đều có mở đầu, cuối mỗi phần nhắc "Xem tiếp phần sau", phần cuối dùng lời nhắc này.</div>
+            </div>
             <div class="opt"><label class="t">Cỡ logo: <b id="brandSizeV">14</b>%</label><input type="range" id="brandSize" min="5" max="40"></div>
             <div class="opt"><label class="t">Độ đậm: <b id="brandOpV">85</b>%</label><input type="range" id="brandOp" min="10" max="100"></div>
             <div class="hint" id="brandMsg" style="margin:0"></div>
           </div>
+        </div>
+        <div class="card pad" id="muCard">
+          <div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">Thư viện nhạc nền</h2><span class="badge" id="muBadge"></span></div>
+          <div class="hint" style="margin:0 0 10px">Nhạc dùng khi chọn "Thay nhạc" lúc làm video. Chỉ nên dùng nhạc miễn phí bản quyền, ví dụ
+            <a href="https://www.youtube.com/audiolibrary" target="_blank" rel="noopener">Thư viện âm thanh YouTube</a> hoặc
+            <a href="https://pixabay.com/music/" target="_blank" rel="noopener">Pixabay Music</a> (tải mp3 về rồi đưa vào đây).</div>
+          <div class="row wrapr"><select class="inp" id="muMood" style="width:auto" aria-label="Tâm trạng"></select>
+            <label class="btn sm" style="cursor:pointer">+ Thêm nhạc<input type="file" id="muFile" accept="audio/*" multiple hidden></label>
+            <span class="hint" id="muMsg" style="margin:0"></span></div>
+          <div id="muList" style="margin-top:10px"></div>
+        </div>
+        <div class="card pad" id="glCard">
+          <div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">Bảng tên riêng</h2><span class="badge" id="glBadge"></span></div>
+          <div class="hint" style="margin:0 0 10px">Mỗi dòng một tên: <code>tên gốc = tên Việt</code>. Video nào cũng dịch tên giống nhau, hợp với kênh chuyên một bộ phim.
+            Tên gốc chữ Trung dùng khi dịch (<code>小新 = Shin</code>); tên gốc chữ Việt dùng để sửa tên bị dịch sai (<code>Tiểu Tân = Shin</code>).</div>
+          <textarea class="inp" id="glText" rows="6" placeholder="小新 = Shin&#10;美伢 = mẹ Misae&#10;广志 = bố Hiroshi&#10;Tiểu Tân = Shin" style="font-family:inherit"></textarea>
+          <div class="row" style="margin-top:8px"><button class="btn primary sm" id="glSave" type="button">Lưu bảng tên</button><span class="hint" id="glMsg" style="margin:0"></span></div>
         </div>
         <div class="card pad" id="stCard">
           <div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">Lưu trữ</h2><button class="btn ghost sm" type="button" onclick="loadStorage()">↻</button></div>
@@ -636,6 +699,7 @@ let pubKey = "", social = null;
 let elHasKey = false, elLoaded = false;  // khai báo sớm: khôi phục lựa chọn ElevenLabs gọi elLoad() ngay lúc mở trang
 let srcMode = "link", selected = null, jobsCache = [], pollTimer = null, renderedKey = "", kitKey = "", curJob = null, resTab = "kit";
 
+function fmtClock(t){ t = Math.round(t || 0); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; }
 function store(k, v){ try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k, v);}catch(e){ return null; } }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtTime = t => { const d = new Date(t*1000); return d.toLocaleString("vi-VN",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"}); };
@@ -658,7 +722,8 @@ function showView(v){
   $$(".nav").forEach(b => b.classList.toggle("on", b.dataset.view === v));
   if (location.hash.slice(1) !== v) history.replaceState(null, "", "#"+v);
   if (v === "accounts") { renderSocial(); loadSocial(); loadSched(); }
-  if (v === "settings") { loadBrand(); loadStorage(); loadTg(); }
+  if (v === "settings") { loadBrand(); loadStorage(); loadTg(); loadMusic(); loadGloss(); }
+  if (v === "stats") { if (!social) loadSocial(); loadStats(true); }
   if (v === "search") { dyLoginState(true); if (!hotLoaded) loadHot(); }
   if (v === "watch") { loadWatches(); wOptText(); if (!social) loadSocial().then(wAccs); else wAccs(); }
 }
@@ -700,7 +765,7 @@ const TR_HINT = {auto:"Có API key AI thì dịch bằng AI (hiểu ngữ cảnh
 $$(".seg[data-name=translator] button").forEach(b => b.addEventListener("click", () => { $("#trHint").textContent = TR_HINT[b.dataset.v]; }));
 $("#trHint").textContent = TR_HINT.auto;
 if (!store("tts_default_v2")) { store("opt_tts", "vieneu"); store("tts_default_v2", "1"); }
-["voice2","model","tts","vertical","translator"].forEach(n => { const v = store("opt_"+n); const b = v && document.querySelector(`.seg[data-name=${n}] [data-v="${v}"]`); if (b) b.click(); });
+["voice2","model","tts","vertical","translator","split"].forEach(n => { const v = store("opt_"+n); const b = v && document.querySelector(`.seg[data-name=${n}] [data-v="${v}"]`); if (b) b.click(); });
 // opt_burn2/opt_cover2: khoá mới vì mặc định đã đổi sang "không ghép phụ đề"
 const syncVsubs = () => { const off = segVal("vertical") === "off"; $("#vsubsRow").hidden = $("#vsubsHint").hidden = off; };
 $$(".seg[data-name=vertical] button").forEach(b => b.addEventListener("click", syncVsubs)); syncVsubs();
@@ -737,7 +802,7 @@ function formOpts(){
   return {voice: segVal("voice2"), tts: segVal("tts"), translator: segVal("translator"), gemini_voice: $("#gemVoice").value, vieneu_voice: $("#vnVoice").value, eleven_voice: $("#elVoice").value,
     eleven_model: $("#elModel").value, model: segVal("model"), dub: b("dub"), burn: b("burn"),
     cover: $("#burn").checked && $("#cover").checked ? "1" : "0", kit: b("kit"), vertical: segVal("vertical"),
-    brand: b("brand"), separate: b("separate"), vsubs: segVal("vertical") !== "off" ? b("vsubs") : "0",
+    brand: b("brand"), separate: b("separate"), vsubs: segVal("vertical") !== "off" ? b("vsubs") : "0", split: segVal("split"), music: $("#music").value,
     bg_volume: (+$("#bg").value/100).toFixed(2), font_size: $("#fs").value};
 }
 $("#form").onsubmit = async e => {
@@ -798,6 +863,82 @@ $("#aiClear").onclick = async () => {
   showAi(await aiPost("/api/config", {clear_key: true})); $("#aiMsg").textContent = "Đã xoá key.";
 };
 
+/* ---------- thống kê ---------- */
+let statsData = null, statsTimer = null;
+const fmtStat = n => n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(1).replace(".0", "") + " tr" : n >= 1e4 ? Math.round(n / 1e3) + " N" : n.toLocaleString("vi-VN");
+function renderStats(){
+  if (!statsData) return;
+  const plat = $("#stPlat").value, sort = $("#stSort").value;
+  let rows = statsData.rows.filter(r => !plat || r.platform === plat);
+  const sum = (k, rs) => rs.reduce((a, r) => a + (r.stats[k] || 0), 0);
+  const by = p => statsData.rows.filter(r => r.platform === p);
+  $("#stSum").innerHTML = [["", "Tất cả", statsData.rows], ...["youtube", "facebook", "tiktok"].map(p => [p, P_NAME[p], by(p)])]
+    .filter(([p, , rs]) => !p || rs.length).map(([p, n, rs]) => `<div class="card pad stbox">
+      <small>${p ? `<span class="pico ${p}">${P_ICON[p]}</span>` : ""}${n} · ${rs.length} video</small>
+      <b>${fmtStat(sum("views", rs))}</b><span>lượt xem</span>
+      <small>${fmtStat(sum("likes", rs))} thích · ${fmtStat(sum("comments", rs))} bình luận</small></div>`).join("");
+  rows.sort((a, b) => sort === "posted" ? (b.posted || 0) - (a.posted || 0) : (b.stats[sort] || 0) - (a.stats[sort] || 0));
+  const top = Math.max(1, ...rows.map(r => r.stats.views || 0));
+  $("#stList").innerHTML = rows.length ? rows.map(r => `<div class="post strow">
+    <span class="pico ${r.platform}">${P_ICON[r.platform]}</span>
+    <div class="inf"><b>${esc(r.title)}</b>
+      <small>${esc(r.account)} · ${fmtTime(r.posted)}${r.privacy === "public" ? "" : " · riêng tư"}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">Mở ↗</a>` : ""}</small>
+      ${r.stats.error ? `<small class="e">${esc(r.stats.error)}</small>` : !r.has_id ? `<small class="hint" style="margin:0">Đăng từ bản cũ, không có mã video để lấy số liệu</small>` : ""}
+      <div class="pbar"><i style="width:${Math.max(2, (r.stats.views || 0) / top * 100)}%"></i></div></div>
+    <div class="stnum"><b>${fmtStat(r.stats.views)}</b><small>xem</small></div>
+    <div class="stnum"><b>${fmtStat(r.stats.likes)}</b><small>thích</small></div>
+    <div class="stnum"><b>${fmtStat(r.stats.comments)}</b><small>bình luận</small></div></div>`).join("")
+    : '<div class="empty">Chưa có video nào được đăng từ tool.</div>';
+  $("#stHint").textContent = statsData.running ? "Đang lấy số liệu mới…" : statsData.at ? `Cập nhật lúc ${fmtTime(statsData.at)}` : "";
+}
+async function loadStats(refresh, force){
+  try {
+    if (refresh) await api("/api/stats/refresh", "POST", {force: !!force});
+    statsData = await api("/api/stats"); renderStats();
+    clearTimeout(statsTimer);
+    if (statsData.running && !$("#view-stats").hidden) statsTimer = setTimeout(() => loadStats(), 2500);
+  } catch(e){ toast(e.message); }
+}
+$("#stReload").onclick = () => loadStats(true, true);
+$("#stPlat").onchange = $("#stSort").onchange = renderStats;
+
+/* ---------- thư viện nhạc nền ---------- */
+function showMusic(d){
+  const sel = $("#muMood"), cur = sel.value;
+  sel.innerHTML = Object.entries(d.moods).map(([k, n]) => `<option value="${k}">${n} (${(d.tracks[k] || []).length})</option>`).join("");
+  if (cur) sel.value = cur;
+  const total = Object.values(d.tracks).reduce((a, t) => a + t.length, 0);
+  $("#muBadge").textContent = total ? `${total} bài` : "Chưa có"; $("#muBadge").className = "badge " + (total ? "on" : "");
+  $("#muList").innerHTML = Object.entries(d.moods).filter(([k]) => (d.tracks[k] || []).length).map(([k, n]) => `<div style="margin-bottom:8px"><b style="font-size:13px">${n}</b>
+    ${d.tracks[k].map(t => `<div class="prow"><small style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</small>
+      <audio controls preload="none" src="/api/music/file/${k}/${encodeURIComponent(t)}" style="height:30px;max-width:220px"></audio>
+      <button class="btn ghost sm" type="button" data-mudel="${k}/${esc(t)}" title="Xoá bài này">✕</button></div>`).join("")}</div>`).join("")
+    || '<div class="empty" style="padding:10px">Chưa có bài nào.</div>';
+  $$("#muList [data-mudel]").forEach(b => b.onclick = async () => {
+    const [m, ...rest] = b.dataset.mudel.split("/"); const name = rest.join("/");
+    if (!confirm(`Xoá "${name}" khỏi thư viện nhạc?`)) return;
+    try { showMusic(await api(`/api/music/${m}/${encodeURIComponent(name)}`, "DELETE")); } catch(e){ toast(e.message); }
+  });
+}
+async function loadMusic(){ try { showMusic(await api("/api/music")); } catch(e){} }
+$("#muFile").onchange = async e => {
+  const files = [...e.target.files]; if (!files.length) return;
+  const fd = new FormData(); fd.append("mood", $("#muMood").value); files.forEach(f => fd.append("file", f));
+  $("#muMsg").textContent = "Đang tải lên…";
+  try { const r = await fetch("/api/music", {method: "POST", body: fd}); const d = await r.json(); if (!r.ok) throw new Error(d.error || "Lỗi");
+    showMusic(d); $("#muMsg").textContent = `Đã thêm ${d.saved} bài`; } catch(err){ $("#muMsg").textContent = err.message; }
+  e.target.value = "";
+};
+loadMusic();
+$("#music").value = store("opt_music") || ""; $("#music").addEventListener("change", e => store("opt_music", e.target.value));
+
+/* ---------- bảng tên riêng ---------- */
+function showGloss(d){ $("#glText").value = d.text || ""; const n = (d.text || "").split("\n").filter(x => x.includes("=")).length;
+  $("#glBadge").textContent = n ? `${n} tên` : "Chưa có"; $("#glBadge").className = "badge " + (n ? "on" : ""); }
+async function loadGloss(){ try { showGloss(await api("/api/glossary")); } catch(e){} }
+$("#glSave").onclick = async () => { try { const d = await api("/api/glossary", "POST", {text: $("#glText").value}); showGloss(d); $("#glMsg").textContent = `Đã lưu ${d.count} tên`; } catch(e){ $("#glMsg").textContent = e.message; } };
+loadGloss();
+
 /* ---------- logo & chữ ký ---------- */
 let brand = null, brandT;
 function showBrand(b){
@@ -805,6 +946,8 @@ function showBrand(b){
   if (document.activeElement !== $("#brandText")) $("#brandText").value = b.text || "";
   $$("#brandPos button").forEach(x => x.classList.toggle("on", x.dataset.v === b.pos));
   $$("#brandOld button").forEach(x => x.classList.toggle("on", x.dataset.v === (b.old || "cover")));
+  $("#brandIntro").checked = !!b.intro; $("#brandOutroOn").checked = !!b.outro_on;
+  if (document.activeElement !== $("#brandOutro")) $("#brandOutro").value = b.outro || "";
   $("#brandOldHint").textContent = ({cover: "Tool tự dò logo cũ ở góc đã chọn, đặt logo của bạn đè đúng lên đó (cả video, bản dọc và ảnh bìa).",
     remove: "Tool tự dò logo cũ ở góc đã chọn, xoá đi bằng cách lấp màu xung quanh, rồi đặt logo của bạn ở góc. Chỗ xoá có thể hơi nhoè.",
     keep: "Không đụng tới logo cũ, logo của bạn đặt ở góc đã chọn."})[b.old || "cover"];
@@ -824,6 +967,9 @@ async function saveBrand(patch){
 $("#brandText").oninput = () => { clearTimeout(brandT); brandT = setTimeout(() => saveBrand({text: $("#brandText").value}), 600); };
 $$("#brandPos button").forEach(b => b.onclick = () => saveBrand({pos: b.dataset.v}));
 $$("#brandOld button").forEach(b => b.onclick = () => saveBrand({old: b.dataset.v}));
+$("#brandIntro").onchange = () => saveBrand({intro: $("#brandIntro").checked});
+$("#brandOutroOn").onchange = () => saveBrand({outro_on: $("#brandOutroOn").checked});
+$("#brandOutro").onchange = () => saveBrand({outro: $("#brandOutro").value});
 [["brandSize","brandSizeV","size"],["brandOp","brandOpV","opacity"]].forEach(([id,out,k]) => {
   $("#"+id).oninput = () => { $("#"+out).textContent = $("#"+id).value; };
   $("#"+id).onchange = () => saveBrand({[k]: +$("#"+id).value});
@@ -911,7 +1057,7 @@ function render(j){
   }
   if (j.status === "error" || j.status === "cancelled") {
     body = `<div class="err"><b>${j.status==="cancelled"?"Đã huỷ.":"Có lỗi xảy ra:"}</b> ${esc(j.status==="cancelled"?"":j.error)}</div>
-      <div class="row">${(j.files||{}).segs ? `<button class="btn primary" id="redubErr" title="Dùng lời thoại đã dịch, chỉ lồng tiếng và xuất video lại">Lồng lại (giữ bản dịch)</button>` : ""}<button class="btn" id="retry">Làm lại từ đầu</button></div>
+      <div class="row"><button class="btn primary" id="resumeErr" title="Dùng lại video đã tải, phần đã nghe và đã dịch; chỉ chạy các bước còn lại">Chạy tiếp từ bước lỗi</button><button class="btn" id="retry">Làm lại từ đầu</button></div>
       <details style="margin-top:14px"><summary class="hint" style="cursor:pointer">Xem nhật ký</summary><div class="log" style="margin-top:8px">${esc((j.log||[]).join("\n"))}</div></details>`;
   }
   if (j.status === "done") {
@@ -925,6 +1071,11 @@ function render(j){
           ${dl(f.video,"⬇ Video tiếng Việt")}${dl(f.vertical,"⬇ Bản dọc 9:16")}${dl(f.srt_vi,"Phụ đề VI")}${dl(f.srt_zh,"Phụ đề Trung")}${dl(f.original,"Video gốc")}
           <button class="btn sm" id="openDir">Mở thư mục</button>
         </div>
+        ${(j.parts || []).length ? `<div class="parts"><h4>Đã cắt thành ${j.parts.length} phần</h4>${j.parts.map(pt => `<div class="prow">
+          <button type="button" class="btn ghost sm" data-play="${esc(pt.vertical || pt.video)}" title="Xem phần này">▶ Phần ${pt.k}</button>
+          <small>${fmtClock(pt.start)}–${fmtClock(pt.end)}</small><span class="spacer"></span>
+          ${dl(pt.video, "Ngang")}${dl(pt.vertical, "Dọc")}${(j.kit_data||{}).frames ? `${dl(`parts/cover${String(pt.k).padStart(2,"0")}.jpg`, "Bìa")}${dl(`parts/cover${String(pt.k).padStart(2,"0")}_tiktok.jpg`, "Bìa TikTok")}` : ""}
+        </div>`).join("")}</div>` : ""}
       </div>
       <div>
         <div class="tabs" id="resTabs" style="margin-bottom:14px">
@@ -960,12 +1111,13 @@ function render(j){
   const log = $("#log"); if (log) log.scrollTop = log.scrollHeight;
   const c = $("#cancel"); if (c) c.onclick = async () => { if (confirm("Huỷ xử lý video này?")) { await fetch(`/api/jobs/${j.id}/cancel`,{method:"POST"}); poll(); } };
   const o = $("#openDir"); if (o) o.onclick = () => fetch(`/api/jobs/${j.id}/open-folder`,{method:"POST"});
-  const re = $("#redubErr"); if (re) re.onclick = () => redub(j, true);
+  const re = $("#resumeErr"); if (re) re.onclick = async () => { try { await api(`/api/jobs/${j.id}/resume`, "POST", {}); toast("Đang chạy tiếp…"); renderedKey = ""; poll(); loadList(); } catch(e){ toast(e.message); } };
   const rt = $("#retry"); if (rt) rt.onclick = () => {
     if (j.source.startsWith("http")) { $("#srcTabs [data-t=link]").click(); $("#link").value = j.source; $("#form").requestSubmit(); }
     else { $("#srcTabs [data-t=file]").click(); alert("Hãy chọn lại file video rồi bấm Bắt đầu dịch."); }
   };
   const v = $("#vid");
+  $$("#panel [data-play]").forEach(b => b.onclick = () => { const v = $("#vid"); v.src = `/files/${j.id}/` + b.dataset.play.split("/").map(encodeURIComponent).join("/"); v.classList.toggle("tall", b.dataset.play.includes("_doc")); v.play(); });
   $$("#vidTabs button").forEach(b => b.onclick = () => {
     $$("#vidTabs button").forEach(x => x.classList.toggle("on", x === b));
     const t = v.currentTime; v.src = `/files/${j.id}/` + encodeURIComponent(j.files[b.dataset.f]);
@@ -1058,7 +1210,10 @@ function renderRedo(j){
     <div class="opt"><label class="t">② Bản video dọc 9:16</label>${segB("rvert", [["off","Không"],["blur","Nền mờ"],["crop","Cắt giữa"]], o.vertical || "off")}
       ${f.vertical ? `<div class="hint">Đã có bản dọc; chọn Nền mờ / Cắt giữa để làm lại.</div>` : ""}</div>
     <div id="rVsBox">${sw("rVsubs", "Phụ đề kiểu TikTok trên bản dọc", o.vsubs)}</div>
-    ${sw("rBrand", "Gắn logo / chữ ký", o.brand, `Logo và chữ ký đặt ở trang <a href="#settings">Cài đặt</a>.`)}
+    ${sw("rBrand", "Gắn logo / chữ ký", o.brand, `Logo, mở đầu và lời nhắc cuối đặt ở trang <a href="#settings">Cài đặt</a>.`)}
+    <div class="opt"><label class="t" for="rMusic">Nhạc nền</label><select class="inp" id="rMusic"><option value="">Giữ nhạc / tiếng nền gốc</option><option value="random">Thay bằng nhạc trong thư viện (ngẫu nhiên)</option><option value="vui">Thay nhạc: Vui nhộn</option><option value="nhenhang">Thay nhạc: Nhẹ nhàng</option><option value="hoihop">Thay nhạc: Hồi hộp</option><option value="camdong">Thay nhạc: Cảm động</option></select>
+      <div class="hint">Đổi nhạc chỉ trộn lại tiếng, không phải đọc lại giọng (video làm từ bản trước hôm nay thì phải đọc lại).</div></div>
+    <div class="opt"><label class="t">Cắt thành nhiều phần (TikTok)</label>${segB("rsplit", [["0","Không"],["1","1 phút"],["2","2 phút"],["3","3 phút"],["5","5 phút"],["10","10 phút"]], String(o.split || 0))}</div>
     <div class="opt" style="margin-top:6px"><label class="t">③ Giọng đọc <span class="hint" style="margin:0">(chậm hơn: đọc lại toàn bộ)</span></label></div>
     ${sw("rDub", o.dub ? "Lồng lại giọng đọc" : "Lồng tiếng Việt", false,o.dub ? "Bật khi muốn đổi bộ đọc, tách giọng gốc, hoặc sau khi đã sửa lời thoại." : "Video này trước chỉ làm phụ đề, bật để lồng tiếng Việt.")}
     <div id="rDubBox">
@@ -1080,11 +1235,13 @@ function renderRedo(j){
     $("#rMsg").textContent = dub ? "Sẽ đọc giọng lại rồi xuất video (mất vài phút)." : "Chỉ xuất lại hình, thường chưa tới 1 phút.";
   };
   $("#rFs").oninput = () => { $("#rFsV").textContent = $("#rFs").value; };
+  $("#rMusic").value = o.music || "";
   ["rBurn","rDub"].forEach(id => $("#"+id).onchange = sync); sync();
   $("#rGo").onclick = async () => {
     const dub = $("#rDub").checked, vert = val("rvert");
     const options = {burn: $("#rBurn").checked, cover: $("#rBurn").checked && $("#rCover").checked,
-      font_size: +$("#rFs").value, vertical: vert, vsubs: vert !== "off" && $("#rVsubs").checked, brand: $("#rBrand").checked};
+      font_size: +$("#rFs").value, vertical: vert, vsubs: vert !== "off" && $("#rVsubs").checked, brand: $("#rBrand").checked,
+      split: +val("rsplit"), music: $("#rMusic").value};
     if (dub) Object.assign(options, {dub: true, tts: val("rtts"), separate: $("#rSep").checked});
     try { await api(`/api/jobs/${j.id}/redo`, "POST", {mode: dub ? "dub" : "render", options});
       toast(dub ? "Đang lồng lại…" : "Đang xuất lại video…"); renderedKey = ""; poll(); loadList(); }
@@ -1208,6 +1365,10 @@ function renderPub(j){
       <select class="inp" id="pubPrivacy" style="width:auto" aria-label="Chế độ hiển thị"><option value="private">Riêng tư / chưa công bố</option><option value="public">Công khai</option></select>
       ${j.files && j.files.vertical ? `<select class="inp" id="pubVariant" style="width:auto" aria-label="Bản video"><option value="vertical">Bản dọc 9:16</option><option value="video">Bản gốc</option></select>` : ""}
     </div>
+    ${(j.parts || []).length ? `<div class="sched">
+      <label class="switch" style="margin:0"><span>Đăng lần lượt cả ${j.parts.length} phần</span><input type="checkbox" id="pubParts" checked><i></i></label>
+      <div class="row" id="pubGapRow"><select class="inp" id="pubGap" style="width:auto" aria-label="Giãn cách giữa các phần"><option value="0">Đăng liền nhau</option><option value="1">Mỗi phần cách 1 giờ</option><option value="3">Cách 3 giờ</option><option value="6">Cách 6 giờ</option><option value="12">Cách 12 giờ</option><option value="24">Mỗi ngày 1 phần</option></select><span class="hint" style="margin:0">Tiêu đề tự thêm "| Phần k/n", mỗi phần dùng bìa "Tập k".</span></div>
+    </div>` : ""}
     <div class="sched">
       <label class="switch" style="margin:0"><span>Hẹn giờ đăng</span><input type="checkbox" id="pubLater"><i></i></label>
       <div class="row" id="pubAtRow" hidden><input class="inp" type="datetime-local" id="pubAt" style="width:auto" aria-label="Giờ đăng"><span class="hint" style="margin:0">Tool phải đang chạy lúc tới giờ; nếu tắt, bài sẽ được đăng ngay khi bạn mở lại tool.</span></div>
@@ -1219,7 +1380,7 @@ function renderPub(j){
     ${posts.length ? `<div style="margin-top:12px">${posts.map(p => `<div class="post">
         <span class="pico ${p.platform}">${P_ICON[p.platform]}</span>
         <div class="inf"><b>${esc(p.account)}</b> · ${POST_ST[p.status]}${p.status === "running" && p.progress > 1 ? " " + p.progress + "%" : ""}
-          <small>${p.status === "scheduled" ? "Sẽ đăng lúc " + fmtTime(p.at) : fmtTime(p.created)} · ${p.privacy === "public" ? "công khai" : "riêng tư"}${p.variant === "vertical" ? " · bản dọc" : ""}${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">Mở video ↗</a>` : ""}</small>
+          <small>${p.part ? `<b>Phần ${p.part}/${p.parts}</b> · ` : ""}${p.status === "scheduled" ? "Sẽ đăng lúc " + fmtTime(p.at) : fmtTime(p.created)} · ${p.privacy === "public" ? "công khai" : "riêng tư"}${p.variant === "vertical" ? " · bản dọc" : ""}${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">Mở video ↗</a>` : ""}</small>
           ${p.note ? `<small>${esc(p.note)}</small>` : ""}${p.error ? `<small class="e">${esc(p.error)}</small>` : ""}
           ${p.status === "running" ? `<div class="pbar"><i style="width:${Math.max(p.progress, 3)}%"></i></div>` : ""}</div>
         ${p.status === "scheduled" ? `<button class="btn ghost sm" type="button" data-unsched="${p.id}" title="Huỷ hẹn giờ">Huỷ</button>` : ""}
@@ -1249,11 +1410,15 @@ function renderPub(j){
     }
     const names = accs.filter(a => ids.includes(a.id)).map(a => `• ${a.name} (${P_NAME[a.platform]})`).join("\n");
     const what = `${pv.value === "public" ? "CÔNG KHAI" : "riêng tư"}${vr && vr.value === "vertical" ? ", bản dọc 9:16" : ""}`;
-    if (!confirm(when ? `Hẹn đăng video này lúc ${fmtTime(when)} (${what}) lên:\n${names}` : `Đăng video này ngay (${what}) lên:\n${names}`)) return;
+    const np = $("#pubParts") && $("#pubParts").checked ? j.parts.length : 0;
+    const vid = np ? `${np} phần của video này${+$("#pubGap").value ? `, mỗi phần cách ${$("#pubGap").selectedOptions[0].textContent.replace(/^Mỗi phần cách |^Cách /, "")}` : ""}` : "video này";
+    if (!confirm(when ? `Hẹn đăng ${vid} từ ${fmtTime(when)} (${what}) lên:\n${names}` : `Đăng ${vid} (${what}) lên:\n${names}`)) return;
     go.disabled = true;
     try {
       if ($("#kTitle")) await kitSave({}, true);
-      await api(`/api/jobs/${j.id}/publish`, "POST", {account_ids: ids, privacy: pv.value, variant: vr ? vr.value : "video", at: when});
+      const pp = $("#pubParts"), parts = !!(pp && pp.checked);
+      await api(`/api/jobs/${j.id}/publish`, "POST", {account_ids: ids, privacy: pv.value, variant: vr ? vr.value : "video", at: when,
+        parts, gap_h: parts ? +$("#pubGap").value : 0});
       if (when) toast("Đã hẹn giờ đăng");
       pubKey = ""; poll(); loadSched();
     } catch(e){ toast(e.message); go.disabled = false; }

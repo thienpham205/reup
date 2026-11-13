@@ -4,17 +4,19 @@ postfx.py - Hoàn thiện video sau khi lồng tiếng:
   - gắn logo + chữ ký (ảnh PNG trong suốt vẽ bằng Pillow rồi chồng lên bằng ffmpeg)
 """
 import json
+import re
 import subprocess
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent
 BRAND_DIR = ROOT / "brand"
 LOGO = BRAND_DIR / "logo.png"
 POSITIONS = ("tr", "tl", "br", "bl")
 VERTICAL = ("off", "blur", "crop")
-DEFAULT_BRAND = {"enabled": False, "text": "", "pos": "tr", "opacity": 85, "size": 14, "old": "cover"}
+DEFAULT_BRAND = {"enabled": False, "text": "", "pos": "tr", "opacity": 85, "size": 14, "old": "cover",
+                 "intro": False, "outro_on": False, "outro": "Follow kênh để xem thêm video hay"}
 # xử lý logo kênh cũ in sẵn trong video: cover = đặt logo của mình đè lên / remove = xoá hẳn (delogo) rồi đặt logo
 # của mình ở góc như thường / keep = giữ nguyên
 OLD_MODES = ("cover", "remove", "keep")
@@ -26,6 +28,8 @@ FONTS = ["C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf", "C:/Wi
 def clean_brand(b):
     b = {**DEFAULT_BRAND, **(b or {})}
     b["enabled"] = bool(b.get("enabled"))
+    b["intro"], b["outro_on"] = bool(b.get("intro")), bool(b.get("outro_on"))
+    b["outro"] = re.sub(r"\s+", " ", str(b.get("outro") or "")).strip()[:60]
     if b.get("old") not in OLD_MODES:
         b["old"] = "cover"
     b.pop("cover_old", None)
@@ -357,7 +361,7 @@ def find_spot(job_dir, fallback=None, corner="tr"):
     return spot
 
 
-def finish(job_dir, video_name, vertical, brand, log=print, vsubs=False, burned=False):
+def finish(job_dir, video_name, vertical, brand, log=print, vsubs=False, burned=False, wrap=None):
     """Gắn logo vào video chính (thay tại chỗ) và tạo bản dọc <tên>.doc.mp4 (vsubs: kèm phụ đề kiểu TikTok).
     Trả về danh sách việc đã làm."""
     job_dir = Path(job_dir)
@@ -405,6 +409,13 @@ def finish(job_dir, video_name, vertical, brand, log=print, vsubs=False, burned=
             apply_brand(src, part, brand, tmp, log, spot, rm)
             part.replace(src)
             done.append("brand")
+        if wrap:
+            log("Thêm đoạn mở đầu có logo / lời nhắc cuối video...")
+            apply_wrap(src, wrap, tmp, log)
+            vdst = job_dir / video_name.replace(".vi.mp4", ".doc.mp4")
+            if "vertical" in done and vdst.is_file():
+                apply_wrap(vdst, wrap, tmp, log)
+            done.append("wrap")
     finally:
         for p in tmp.glob("*"):
             p.unlink(missing_ok=True)
@@ -438,3 +449,230 @@ def preview(brand, frame=None):
     out.paste(h.convert("RGB"), (0, 0))
     out.paste(v.convert("RGB"), (h.width + 16, 0))
     return out
+
+
+# ------------------------------------------------------------------ mở đầu / kết thúc, cắt nhiều phần
+INTRO_S = 2.0  # độ dài đoạn mở đầu có logo
+OUTRO_S = 4.0  # lời nhắc cuối video hiện trong mấy giây cuối
+PARTS_DIR = "parts"
+PARTS_FILE = "parts.json"
+SPLIT_MIN = (0, 1, 2, 3, 5, 10)  # phút / phần (0 = không cắt)
+
+
+def video_fps(video):
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                          "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout.strip()
+    return out if re.fullmatch(r"\d+(/\d+)?", out or "") and not out.startswith("0") else "30"
+
+
+def duration(video):
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                          str(video)], capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def _pill(w, h, text, y_frac, size_frac=0.05, bg=(0, 0, 0, 175), fg=(255, 255, 255, 255), accent=None, x="c"):
+    """Lớp RGBA cỡ video có một nhãn chữ bo tròn (x: c giữa / l trái)."""
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    base = min(w, h)
+    size = max(14, int(base * size_frac))
+    d = ImageDraw.Draw(layer)
+    while True:  # chữ dài thì thu nhỏ cho vừa 90% bề ngang
+        font = _font(size)
+        x0, y0, x1, y1 = d.textbbox((0, 0), text, font=font)
+        if x1 - x0 + size * 1.4 <= w * 0.9 or size <= 14:
+            break
+        size = int(size * 0.92)
+    tw, th = x1 - x0, y1 - y0
+    px, py = int(size * 0.7), int(size * 0.45)
+    bw, bh = tw + px * 2, th + py * 2
+    bx = (w - bw) // 2 if x == "c" else int(base * 0.035)
+    by = int(h * y_frac)
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2, fill=bg)
+    if accent:
+        d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=bh // 2, outline=accent, width=max(2, base // 240))
+    d.text((bx + px - x0, by + py - y0), text, font=font, fill=fg)
+    return layer
+
+
+def wrap_cfg(brand):
+    """Cấu hình mở đầu / lời nhắc cuối từ cài đặt logo (None nếu tắt cả hai)."""
+    b = clean_brand(brand)
+    intro = b["intro"] and (LOGO.is_file() or b["text"])
+    outro = b["outro_on"] and b["outro"]
+    return {"intro": bool(intro), "outro": b["outro"] if outro else "", "text": b["text"]} if (intro or outro) else None
+
+
+def intro_png(src, w, h, wrap, tmp, name="intro.png"):
+    """Ảnh mở đầu: khung hình đầu video làm mờ + logo kênh ở giữa (+ tên kênh)."""
+    tmp = Path(tmp)
+    frame = tmp / "_first.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "1", "-i", str(src), "-frames:v", "1", str(frame)],
+                   capture_output=True)
+    try:
+        bg = Image.open(frame).convert("RGB").resize((w, h))
+    except Exception:
+        bg = Image.new("RGB", (w, h), (20, 22, 34))
+    bg = bg.filter(ImageFilter.GaussianBlur(min(w, h) // 25))
+    bg = Image.blend(bg, Image.new("RGB", (w, h), (0, 0, 0)), 0.45).convert("RGBA")
+    base = min(w, h)
+    cy = h // 2
+    if LOGO.is_file():
+        lw = int(base * 0.42)
+        lg = Image.open(LOGO).convert("RGBA")
+        lg = lg.resize((lw, int(lg.height * lw / lg.width)), Image.LANCZOS)
+        cy = (h - lg.height) // 2 - (int(base * 0.05) if wrap.get("text") else 0)
+        bg.alpha_composite(lg, ((w - lg.width) // 2, cy))
+        cy += lg.height + int(base * 0.03)
+    if wrap.get("text"):
+        font = _font(int(base * 0.07))
+        d = ImageDraw.Draw(bg)
+        x0, y0, x1, y1 = d.textbbox((0, 0), wrap["text"], font=font, stroke_width=4)
+        d.text(((w - (x1 - x0)) // 2 - x0, cy - y0), wrap["text"], font=font, fill=(255, 255, 255),
+               stroke_width=4, stroke_fill=(0, 0, 0))
+    out = tmp / name
+    bg.convert("RGB").save(out)
+    return out
+
+
+def render_piece(src, dst, tmp, start=0.0, dur=None, overlays=(), intro=None, log=print):
+    """Cắt đoạn [start, start + dur] của src (mã hoá lại nên cắt chính xác), chồng các lớp PNG cỡ khung hình
+    (overlays: [(png, t0, t1)] theo thời gian của đoạn), thêm đoạn mở đầu intro (PNG) nếu có."""
+    w, h = video_size(src)
+    fps = video_fps(src)
+    # -ss / -t đặt TRƯỚC -i nên chỉ áp cho video nguồn (đặt sau sẽ bị hiểu là của file ảnh chồng phía sau)
+    args = (["-ss", f"{start:.3f}"] if start else []) + (["-t", f"{dur:.3f}"] if dur else [])
+    args += ["-i", str(Path(src).resolve())]
+    chain = (f"[0:v]setpts=PTS-STARTPTS,fps={fps},format=yuv420p,setsar=1[v0];"
+             "[0:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a0]")
+    lbl, n = "[v0]", 1
+    for png, t0, t1 in overlays:
+        args += ["-i", str(Path(png).resolve())]
+        chain += f";{lbl}[{n}:v]overlay=0:0:enable='between(t,{t0:.2f},{t1:.2f})'[v{n}]"
+        lbl, n = f"[v{n}]", n + 1
+    if intro:
+        args += ["-loop", "1", "-t", f"{INTRO_S}", "-i", str(Path(intro).resolve()),
+                 "-f", "lavfi", "-t", f"{INTRO_S}", "-i", "anullsrc=r=48000:cl=stereo"]
+        chain += (f";[{n}:v]scale={w}:{h},fps={fps},format=yuv420p,setsar=1,"
+                  f"fade=in:st=0:d=0.35,fade=out:st={INTRO_S - 0.3:.2f}:d=0.3[iv]"
+                  f";[iv][{n + 1}:a]{lbl}[a0]concat=n=2:v=1:a=1[vo][ao]")
+    else:
+        chain += f";{lbl}null[vo];[a0]anull[ao]"
+    _ffmpeg(args + ["-filter_complex", chain, "-map", "[vo]", "-map", "[ao]", "-c:v", "libx264", "-preset",
+                    "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart", str(Path(dst).resolve())], log)
+
+
+def apply_wrap(src, wrap, tmp, log=print):
+    """Thêm mở đầu có logo + lời nhắc cuối vào cả video src (thay tại chỗ)."""
+    if not wrap:
+        return
+    w, h = video_size(src)
+    total = duration(src)
+    tall = h > w * 1.4
+    ov = []
+    if wrap.get("outro") and total > OUTRO_S + 2:
+        png = Path(tmp) / f"outro_{w}x{h}.png"
+        _pill(w, h, wrap["outro"].upper(), 0.15 if tall else 0.06, 0.045 if tall else 0.05,
+              accent=(255, 214, 10)).save(png)
+        ov.append((png, total - OUTRO_S, total + 1))
+    intro = intro_png(src, w, h, wrap, tmp, f"intro_{w}x{h}.png") if wrap.get("intro") else None
+    if not ov and not intro:
+        return
+    part = Path(tmp) / "wrapped.mp4"
+    render_piece(src, part, tmp, overlays=ov, intro=intro, log=log)
+    part.replace(src)
+
+
+def cut_points(total, minutes, segs):
+    """Chia [0, total] thành các phần ~minutes phút, cắt ở khoảng lặng giữa hai câu thoại gần mốc nhất."""
+    import math
+
+    L = minutes * 60
+    if not minutes or total <= L * 1.15:
+        return [(0.0, total)]
+    n = math.ceil(total / L)
+    target = total / n
+    segs = sorted(segs or [], key=lambda x: x["start"])
+    # end0 = lúc thật sự hết lời (end của phụ đề đã được kéo dài tới sát câu sau)
+    end = [min(s.get("end0", s["end"]), s["end"]) for s in segs]
+    # ranh giới giữa hai câu: (thời điểm cắt, độ dài khoảng lặng, câu trước có kết thúc hẳn bằng . ? ! không)
+    gaps = [((end[i] + segs[i + 1]["start"]) / 2, max(0.0, segs[i + 1]["start"] - end[i]),
+             bool(re.search(r"[.?!…]\s*$", segs[i].get("vi") or ""))) for i in range(len(segs) - 1)]
+    cuts = []
+    for k in range(1, n):
+        t = k * target
+        cand = [c for c in gaps if abs(c[0] - t) <= target * 0.2]
+        # gần mốc nhất; ưu tiên khoảng lặng dài (chuyển cảnh) và chỗ hết hẳn một câu
+        best = min(cand, key=lambda c: abs(c[0] - t) - 4 * min(c[1], 3) - (3 if c[2] else 0))[0] if cand else t
+        cuts.append(round(best, 2))
+    edges = [0.0] + cuts + [total]
+    return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+
+def split_parts(job_dir, video_name, minutes, log=print, wrap=None, label="PHẦN"):
+    """Cắt video chính (và bản dọc nếu có) thành nhiều phần cho TikTok: mỗi phần có nhãn "PHẦN k/n" vài giây đầu,
+    lời nhắc "xem tiếp phần sau" ở cuối, mở đầu có logo (nếu bật). Ghi parts/parts.json."""
+    import shutil
+
+    job_dir = Path(job_dir)
+    pdir = job_dir / PARTS_DIR
+    shutil.rmtree(pdir, ignore_errors=True)
+    if not minutes:
+        return []
+    src = job_dir / video_name
+    total = duration(src)
+    try:
+        segs = json.loads((job_dir / "segs.json").read_text(encoding="utf-8"))["segs"]
+    except Exception:
+        segs = []
+    spans = cut_points(total, minutes, segs)
+    if len(spans) < 2:
+        log(f"Video {total / 60:.1f} phút, không cần cắt thành nhiều phần ({minutes} phút / phần)")
+        return []
+    n = len(spans)
+    log(f"Cắt thành {n} phần (~{minutes} phút / phần) cho TikTok...")
+    pdir.mkdir()
+    tmp = pdir / "_tmp"
+    tmp.mkdir()
+    vert = job_dir / video_name.replace(".vi.mp4", ".doc.mp4")
+    sources = [("video", src)] + ([("vertical", vert)] if vert.is_file() else [])
+    parts = []
+    try:
+        intro = {}
+        for k, (a, b) in enumerate(spans, 1):
+            item = {"k": k, "n": n, "start": round(a, 2), "end": round(b, 2)}
+            for kind, video in sources:
+                w, h = video_size(video)
+                tall = h > w * 1.4
+                badge = tmp / f"badge_{k}_{kind}.png"
+                _pill(w, h, f"{label} {k}/{n}", 0.12 if tall else 0.035, 0.05 if tall else 0.055,
+                      bg=(235, 36, 54, 230), x="l").save(badge)
+                ov = [(badge, 0, 4)]
+                nxt = f"XEM TIẾP {label} {k + 1} Ở VIDEO SAU" if k < n else ((wrap or {}).get("outro") or "").upper()
+                if nxt:
+                    end_png = tmp / f"end_{k}_{kind}.png"
+                    _pill(w, h, nxt, 0.15 if tall else 0.06, 0.045 if tall else 0.05,
+                          accent=(255, 214, 10)).save(end_png)
+                    ov.append((end_png, max(0, (b - a) - OUTRO_S), (b - a) + 1))
+                if wrap and wrap.get("intro") and kind not in intro:
+                    intro[kind] = intro_png(video, w, h, wrap, tmp, f"intro_{kind}.png")
+                out = pdir / f"phan{k:02}{'_doc' if kind == 'vertical' else ''}.mp4"
+                render_piece(video, out, tmp, a, b - a, ov, intro.get(kind), log)
+                item[kind] = f"{PARTS_DIR}/{out.name}"
+            parts.append(item)
+            log(f"  xong phần {k}/{n}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    (pdir / PARTS_FILE).write_text(json.dumps(parts, ensure_ascii=False, indent=1), encoding="utf-8")
+    return parts
+
+
+def load_parts(job_dir):
+    try:
+        return json.loads((Path(job_dir) / PARTS_DIR / PARTS_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        return []

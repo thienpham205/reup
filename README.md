@@ -118,6 +118,46 @@ ngay khi bạn mở lại tool (và ghi chú "đăng trễ").
 Dán nhiều link vào ô link (mỗi dòng một link, hoặc dán liền nhiều đoạn chia sẻ). Mỗi link thành một video trong hàng
 đợi, xử lý lần lượt với cùng tuỳ chọn. Tối đa 50 link mỗi lần.
 
+## Phim dài
+
+- **Dán đường dẫn file trên máy** (vd `D:\phim\tap1.mp4`, mỗi dòng một file) vào ô link: tool dùng thẳng file đó,
+  không phải tải lên / sao chép. Tải file lên qua web nhận tối đa 20 GB, ghi tạm vào thư mục dữ liệu (không đầy ổ C).
+- **Tách giọng** đọc âm thanh dần từ ổ đĩa: phim 2 tiếng cũng chỉ tốn khoảng 1,5 GB RAM.
+- **Chạy tiếp từ bước lỗi**: video lỗi / tắt máy giữa chừng thì bấm **Chạy tiếp từ bước lỗi**. Tool dùng lại video đã
+  tải, phần đã nghe (`asr.json`) và đã dịch (`segs.json`), chỉ chạy các bước còn lại.
+- **Cắt thành nhiều phần cho TikTok** (tuỳ chọn khi làm video hoặc ở thẻ Làm tiếp): mỗi phần dài khoảng 1 / 2 / 3 / 5 /
+  10 phút, cắt ở chỗ hết câu (ưu tiên khoảng lặng, chuyển cảnh). Mỗi phần có nhãn "PHẦN k/n" vài giây đầu, lời nhắc
+  "XEM TIẾP PHẦN k+1 Ở VIDEO SAU" ở cuối, bìa riêng có nhãn "Tập k" (cả bìa TikTok). Các phần nằm trong thư mục
+  `parts/` của video. Ở mục đăng bài, bật **Đăng lần lượt cả n phần** và chọn giãn cách (liền nhau, mỗi 1 / 3 / 6 / 12
+  giờ, mỗi ngày 1 phần); tiêu đề tự thêm "| Phần k/n".
+
+## Bảng tên riêng
+
+Cài đặt → **Bảng tên riêng**: mỗi dòng `tên gốc = tên Việt`, vd `小新 = Shin`, `美伢 = mẹ Misae`. Video nào cũng dịch tên
+giống nhau. Dịch bằng Google / Hunyuan: tên Trung được thay bằng tên Việt trước khi dịch; dịch bằng AI: AI nhận bảng tên
+và phải dịch đúng. Dòng có tên gốc chữ Việt (vd `Tiểu Tân = Shin`) dùng để sửa tên bị dịch sai trong bản dịch.
+
+## Mở đầu / kết thúc tự động
+
+Cài đặt → Logo & chữ ký: **Đoạn mở đầu 2 giây có logo kênh** (khung đầu video làm mờ + logo + tên kênh) và **Lời nhắc ở 4
+giây cuối video** (vd "Follow kênh để xem thêm video hay"). Áp dụng cho video bật "Gắn logo / chữ ký"; video cắt nhiều
+phần thì mỗi phần đều có mở đầu, phần cuối dùng lời nhắc này.
+
+## Thay nhạc nền
+
+Cài đặt → **Thư viện nhạc nền**: thêm file nhạc (mp3, m4a...) theo tâm trạng Vui nhộn / Nhẹ nhàng / Hồi hộp / Cảm động.
+Khi làm video chọn **Nhạc nền: Thay nhạc** (ngẫu nhiên hoặc theo tâm trạng): bỏ hẳn tiếng gốc, chỉ còn giọng Việt + nhạc
+(nhỏ xuống khi có lời, tắt dần ở cuối). Chỉ nên dùng nhạc miễn phí bản quyền (Thư viện âm thanh YouTube, Pixabay Music).
+Tool lưu riêng giọng Việt (`giong_viet.m4a`) nên đổi nhạc, bật tách giọng hay chỉnh âm lượng nền ở thẻ Làm tiếp chỉ trộn lại
+tiếng, không phải đọc lại.
+
+## Thống kê sau khi đăng
+
+Trang **Thống kê**: lượt xem, thích, bình luận của các video tool đã đăng (tổng theo nền tảng + từng video, sắp xếp theo
+lượt xem). Số liệu lấy qua API chính thức, tự làm mới mỗi 15 phút khi mở trang. TikTok cần quyền `video.list`: tài khoản
+TikTok đã liên kết trước đây phải **liên kết lại** (và ứng dụng TikTok của bạn phải bật quyền này). Video đăng trước khi có
+tính năng này không có mã video nên không lấy được số liệu.
+
 ## Bản video dọc 9:16 và logo / chữ ký
 
 - **Bản video dọc** (Shorts / Reels / TikTok): ngoài video gốc, tool xuất thêm file `*.doc.mp4` 1080×1920.

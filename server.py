@@ -16,7 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, Request, abort, jsonify, request, send_from_directory
 
 import notify
 import vieneu_tts
@@ -38,8 +38,19 @@ JOBS_DIR = storage.jobs_dir()  # đổi được trên web (Cài đặt -> Lưu 
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 PORT = int(os.environ.get("PORT", 5577))
 
+class BigUploadRequest(Request):
+    """File tải lên ghi tạm vào thư mục dữ liệu (ổ D...) thay vì thư mục TEMP của Windows trên ổ C (hay đầy)."""
+
+    def _get_file_stream(self, total_content_length, content_type, filename=None, content_length=None):
+        import tempfile
+
+        return tempfile.TemporaryFile("wb+", dir=str(JOBS_DIR))
+
+
 app = Flask(__name__, static_folder=str(ROOT / "static"), static_url_path="/static")
-app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # file tải lên tối đa 1 GB
+app.request_class = BigUploadRequest
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 ** 3  # file tải lên tối đa 20 GB (phim dài)
+VIDEO_EXT = (".mp4", ".mkv", ".mov", ".avi", ".flv", ".webm", ".ts", ".m4v", ".wmv", ".mpg", ".mpeg")
 app.register_blueprint(social.bp)
 
 jobs = {}  # id -> dict
@@ -142,6 +153,9 @@ def run_job(job):
            "--font-size", str(opt["font_size"]), "--tts", opt.get("tts", "edge")]
     if opt.get("tts") == "gemini" and opt.get("gemini_voice"):
         cmd += ["--gemini-voice", opt["gemini_voice"]]
+    track = pick_music(opt.get("music")) if opt.get("dub") else None
+    if track:
+        cmd += ["--music", str(track)]
     if opt.get("tts") == "vieneu" and opt.get("vieneu_voice"):
         cmd += ["--vieneu-voice", opt["vieneu_voice"]]
     if opt.get("tts") == "eleven":
@@ -165,7 +179,12 @@ def run_job(job):
         cmd.append("--rerender")
     elif redub:
         cmd.append("--redub")
+    elif job.get("resume"):
+        cmd.append("--resume")
     env = dict(os.environ, PYTHONIOENCODING="utf-8", HF_HUB_DISABLE_SYMLINKS_WARNING="1")
+    if opt.get("music") and opt.get("dub"):
+        job["log"].append(f"Nhạc nền: {track.parent.name}/{track.name}" if track else
+                          "Chưa có nhạc nào trong thư viện (Cài đặt -> Thư viện nhạc nền) -> giữ nền gốc")
     with lock:
         job.update(status="running", step="render" if rerender else "dub" if redub else "download",
                    error="", progress="")
@@ -203,22 +222,34 @@ def run_job(job):
         shutil.rmtree(t, ignore_errors=True)
     video = find_files(jdir).get("video")
     brand = postfx.clean_brand(read_config().get("brand")) if opt.get("brand") else None
-    if code == 0 and video and job.get("status") != "cancelled" and (
-            opt.get("vertical", "off") != "off" or postfx.has_brand(brand)):
+    wrap = postfx.wrap_cfg(brand) if brand else None  # mở đầu có logo / lời nhắc cuối (theo cài đặt logo)
+    split = int(opt.get("split") or 0)
+    if code == 0 and video and job.get("status") != "cancelled":
         def flog(msg):
             with lock:
                 job["log"].append(msg)
                 job["step"], job["progress"] = "finish", ""
 
         try:
-            postfx.finish(jdir, video, opt.get("vertical", "off"), brand, flog, vsubs=opt.get("vsubs", False),
-                           burned=bool(opt.get("burn")))
+            if opt.get("vertical", "off") != "off" or postfx.has_brand(brand) or (wrap and not split):
+                # cắt nhiều phần thì mở đầu / kết thúc gắn vào từng phần, không gắn vào video chính
+                postfx.finish(jdir, video, opt.get("vertical", "off"), brand, flog, vsubs=opt.get("vsubs", False),
+                              burned=bool(opt.get("burn")), wrap=None if split else wrap)
+            postfx.split_parts(jdir, video, split, flog, wrap=wrap)
         except Exception as e:  # lỗi hoàn thiện không làm hỏng video đã lồng tiếng
             flog(f"Không hoàn thiện được video: {str(e)[:300]}")
+        kit = publish_kit.load_kit(jdir) if redub else None
+        if kit and kit.get("frames"):  # làm tiếp: vẽ lại bìa (logo mới, bìa từng phần...)
+            try:
+                publish_kit.render_cover(jdir, kit)
+                kit["rev"] = int(kit.get("rev", 0)) + 1
+                publish_kit.save_kit(jdir, kit)
+            except Exception as e:
+                flog(f"Không vẽ lại được ảnh bìa: {str(e)[:200]}")
     with lock:
         job["finished"] = time.time()
         job["files"] = find_files(jdir)
-        job["redub"] = job["rerender"] = False
+        job["redub"] = job["rerender"] = job["resume"] = False
         if job.get("status") == "cancelled":
             if redub and job["files"].get("video"):  # huỷ giữa lúc làm tiếp -> video cũ vẫn còn, dùng tiếp được
                 job.update(status="done", step="done", error="")
@@ -306,6 +337,7 @@ def public(job, full=False):
             d["lines"] = [{"time": v["time"], "vi": v["text"], "zh": zh[i]["text"] if i < len(zh) else ""}
                           for i, v in enumerate(vi)]
         d["kit_data"] = publish_kit.load_kit(jdir)
+        d["parts"] = postfx.load_parts(jdir)
     return d
 
 
@@ -335,9 +367,17 @@ def create_job():
     upload = request.files.get("file")
     if not link and not (upload and upload.filename):
         return jsonify(error="Hãy dán link Douyin hoặc chọn một file video."), 400
-    if link and not re.search(r"https?://", link):
-        return jsonify(error="Không thấy link trong nội dung bạn dán."), 400
-    links = []
+    # dán đường dẫn file trên máy (vd D:\phim\abc.mp4) -> dùng thẳng file đó, khỏi tải lên / sao chép (phim dài)
+    paths = []
+    for ln in link.splitlines():
+        ln = ln.strip().strip('"').strip("'")
+        if ln and not re.match(r"https?://", ln) and Path(ln).suffix.lower() in VIDEO_EXT:
+            if not Path(ln).is_file():
+                return jsonify(error=f"Không thấy file: {ln}"), 400
+            paths.append(str(Path(ln).resolve()))
+    if link and not paths and not re.search(r"https?://", link):
+        return jsonify(error="Không thấy link hay đường dẫn file video trong nội dung bạn dán."), 400
+    links = list(paths)
     if not (upload and upload.filename):
         # dán nhiều link (mỗi dòng một link / nhiều đoạn chia sẻ) -> mỗi link một video trong hàng đợi
         for u in re.findall(r"https?://[^\s，。“”\"'<>]+", link):
@@ -357,6 +397,8 @@ def create_job():
             src_path = JOBS_DIR / jid / f"upload{ext}"
             upload.save(src_path)
             return make_job(str(src_path), upload.filename, Path(upload.filename).stem, options, jid=jid)
+        if links[n] in paths:
+            return make_job(links[n], Path(links[n]).name, Path(links[n]).stem, options, n)
         return make_job(links[n], links[n], "", options, n)  # chỉ giữ phần link trong đoạn chia sẻ để hiển thị gọn
 
     made = [new_job(n) for n in range(len(links) or 1)]
@@ -414,6 +456,8 @@ def parse_options(f):
         "brand": on("brand", "0"),
         "separate": on("separate", "0"),
         "vsubs": on("vsubs", "0"),
+        "split": int(num("split", 0, 0, 10, int)) if int(num("split", 0, 0, 10, int)) in postfx.SPLIT_MIN else 0,
+        "music": f.get("music") if f.get("music") in ("random", *MUSIC_MOODS) else "",
     }
 
 
@@ -517,6 +561,11 @@ def publish_job(jid):
     body = request.get_json(force=True) or {}
     privacy = body.get("privacy") if body.get("privacy") in social.PRIVACY else "private"
     variant = "vertical" if body.get("variant") == "vertical" and files.get("vertical") else "video"
+    parts = postfx.load_parts(JOBS_DIR / jid) if body.get("parts") else []
+    try:
+        gap_h = min(max(float(body.get("gap_h") or 0), 0), 72)
+    except (TypeError, ValueError):
+        gap_h = 0
     accounts = [a for a in (social.account_brief(str(i)) for i in (body.get("account_ids") or [])[:20]) if a]
     if not accounts:
         return jsonify(error="Hãy chọn ít nhất một tài khoản."), 400
@@ -535,19 +584,28 @@ def publish_job(jid):
         posts = job.setdefault("posts", [])
         busy = {p["account_id"] for p in posts if p["status"] in ("queued", "running")}
         for a in accounts:
-            if a["id"] in busy and not at:
+            if a["id"] in busy and not at and not parts:
                 continue
-            post = {"id": uuid.uuid4().hex[:8], "account_id": a["id"], "account": a["name"], "platform": a["platform"],
-                    "privacy": privacy, "variant": variant, "status": "scheduled" if at else "queued", "at": at,
-                    "progress": 0, "url": "", "note": "", "error": "", "created": time.time()}
-            posts.append(post)
-            new.append(post)
+            for part in parts or [None]:
+                k = part["k"] if part else 0
+                # phần sau đăng cách phần trước gap_h giờ (phần 1: ngay / giờ hẹn)
+                when = (at or time.time()) + (k - 1) * gap_h * 3600 if part and k > 1 else at
+                if part and k > 1 and not gap_h:
+                    when = at  # không giãn cách -> đăng nối tiếp ngay sau phần trước
+                post = {"id": uuid.uuid4().hex[:8], "account_id": a["id"], "account": a["name"],
+                        "platform": a["platform"], "privacy": privacy, "variant": variant,
+                        "status": "scheduled" if when else "queued", "at": when, "part": k or None,
+                        "parts": len(parts) or None, "progress": 0, "url": "", "note": "", "error": "",
+                        "created": time.time()}
+                posts.append(post)
+                new.append(post)
         keep = [p for p in posts if p["status"] == "scheduled"]  # không xoá bài đang hẹn khi danh sách dài
-        rest = [p for p in posts if p["status"] != "scheduled"][-30:]
+        rest = [p for p in posts if p["status"] != "scheduled"][-60:]
         posts[:] = [p for p in posts if p in keep or p in rest]
     save(job)
-    if not at:
-        threading.Thread(target=lambda: [run_post(job, p) for p in new], daemon=True).start()
+    now = [p for p in new if p["status"] == "queued"]
+    if now:
+        threading.Thread(target=lambda: [run_post(job, p) for p in now], daemon=True).start()
     return jsonify(public(job)), 202
 
 
@@ -559,6 +617,14 @@ def run_post(job, post):
     frames, fi = kit.get("frames") or [], kit.get("frame", 0)
     cover_ms = int(frames[fi]["t"] * 1000) if isinstance(fi, int) and 0 <= fi < len(frames) else None
     video = files.get(post.get("variant") or "video") or files.get("video")
+    cover = jdir / files["cover"] if files.get("cover") else None
+    if post.get("part"):
+        part = next((x for x in postfx.load_parts(jdir) if x["k"] == post["part"]), None)
+        video = (part or {}).get("vertical" if post.get("variant") == "vertical" else "video") or (part or {}).get("video")
+        pc = jdir / publish_kit.part_cover_name(post["part"], post.get("variant") == "vertical")
+        cover = pc if pc.is_file() else cover
+        title = f"{title} | Phần {post['part']}/{post.get('parts') or (part or {}).get('n', '')}"[:200]
+        cover_ms = None
     post["status"] = "running"
     save(job)
 
@@ -569,13 +635,13 @@ def run_post(job, post):
         if not video:
             raise RuntimeError("Không còn file video để đăng.")
         res = social.publish(post["account_id"], jdir / video, title, kit.get("description", ""),
-                             kit.get("hashtags") or [], jdir / files["cover"] if files.get("cover") else None,
-                             cover_ms, post.get("privacy", "private"), tick)
+                             kit.get("hashtags") or [], cover, cover_ms, post.get("privacy", "private"), tick)
         late = post.get("at") and time.time() - post["at"] > 600
         note = res.get("note", "")
         if late:
             note = (note + " " if note else "") + "Đăng trễ so với giờ hẹn vì lúc đó tool không chạy."
-        post.update(status="done", progress=100, url=res.get("url", ""), note=note)
+        post.update(status="done", progress=100, url=res.get("url", ""), note=note, ext_id=res.get("id", ""),
+                    title=title)
         notify.send("post_done", f"📤 Đã đăng lên {post.get('platform')} ({post.get('account')}): {title}\n"
                                  f"{post.get('url') or ''}")
     except Exception as e:
@@ -833,8 +899,9 @@ def redub_job(jid):
 
 
 # các tuỳ chọn mà đổi thì phải đọc giọng lại; còn lại (phụ đề, cỡ chữ, bản dọc, logo) chỉ cần xuất lại video
-DUB_KEYS = ("dub", "voice", "tts", "separate", "bg_volume", "gemini_voice", "eleven_voice", "eleven_model", "vieneu_voice")
-REDO_KEYS = DUB_KEYS + ("burn", "cover", "font_size", "vertical", "vsubs", "brand", "kit")
+DUB_KEYS = ("dub", "voice", "tts", "gemini_voice", "eleven_voice", "eleven_model", "vieneu_voice")
+REDO_KEYS = DUB_KEYS + ("burn", "cover", "font_size", "vertical", "vsubs", "brand", "kit", "split", "music")
+MIX_KEYS = ("separate", "bg_volume", "music")  # chỉ cần trộn lại tiếng (đã lưu giọng Việt riêng), không phải đọc lại
 
 
 def queue_redo(job, mode, changes):
@@ -852,11 +919,28 @@ def queue_redo(job, mode, changes):
             mode = "dub"  # trước chỉ làm phụ đề, giờ bật lồng tiếng
         if mode != "dub" and not find_files(JOBS_DIR / job["id"]).get("video"):
             mode = "dub"  # chưa từng xuất xong -> không có tiếng đã lồng để dùng lại
+        if mode != "dub" and any(new.get(k) != old.get(k) for k in MIX_KEYS) and new["dub"] \
+                and not (JOBS_DIR / job["id"] / "giong_viet.m4a").is_file():
+            mode = "dub"  # video làm từ bản cũ chưa lưu giọng Việt riêng -> đổi nền / nhạc phải đọc lại
         job["options"] = new
         job.update(status="queued", redub=mode == "dub", rerender=mode != "dub", error="")
         job["log"].append("—— Lồng lại giọng đọc ——" if mode == "dub" else "—— Xuất lại video với tuỳ chọn mới ——")
     save(job)
     work_q.put(job["id"])
+    return jsonify(public(job)), 202
+
+
+@app.post("/api/jobs/<jid>/resume")
+def resume_job(jid):
+    """Chạy tiếp job lỗi / bị tắt giữa chừng: dùng lại video đã tải, kết quả nghe, bản dịch đã lưu."""
+    job = jobs.get(jid) or abort(404)
+    with lock:
+        if job["status"] in ("queued", "running"):
+            return jsonify(error="Video đang xử lý."), 409
+        job.update(status="queued", resume=True, redub=False, rerender=False, error="")
+        job["log"].append("—— Chạy tiếp từ bước bị lỗi ——")
+    save(job)
+    work_q.put(jid)
     return jsonify(public(job)), 202
 
 
@@ -1007,6 +1091,149 @@ def telegram_state():
     t = read_config().get("telegram") or {}
     return {"connected": bool(t.get("token") and t.get("chat_id")), "chat_name": t.get("chat_name", ""),
             "bot": t.get("bot", ""), "events": {e: (t.get("events") or {}).get(e, True) for e in notify.EVENTS}}
+
+
+# ------------------------------------------------------------------ thư viện nhạc nền thay thế
+MUSIC_MOODS = {"vui": "Vui nhộn", "nhenhang": "Nhẹ nhàng", "hoihop": "Hồi hộp", "camdong": "Cảm động"}
+MUSIC_EXT = (".mp3", ".m4a", ".wav", ".ogg", ".aac", ".flac")
+
+
+def music_dir():
+    d = (storage.data_dir() or ROOT) / "music"
+    for m in MUSIC_MOODS:
+        (d / m).mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def music_list():
+    d = music_dir()
+    return {m: sorted(f.name for f in (d / m).iterdir() if f.suffix.lower() in MUSIC_EXT) for m in MUSIC_MOODS}
+
+
+def pick_music(choice):
+    """choice: random (mọi tâm trạng) / tên tâm trạng -> chọn ngẫu nhiên một bài trong thư viện."""
+    import random
+
+    if not choice:
+        return None
+    lib = music_list()
+    pool = [(m, n) for m in (MUSIC_MOODS if choice == "random" else [choice]) for n in lib.get(m, [])]
+    if not pool:
+        return None
+    m, n = random.choice(pool)
+    return music_dir() / m / n
+
+
+@app.get("/api/music")
+def get_music():
+    return jsonify(moods=MUSIC_MOODS, tracks=music_list(), dir=str(music_dir()))
+
+
+@app.post("/api/music")
+def add_music():
+    mood = request.form.get("mood")
+    files = request.files.getlist("file")
+    if mood not in MUSIC_MOODS or not files:
+        return jsonify(error="Hãy chọn tâm trạng và file nhạc."), 400
+    saved = 0
+    for f in files[:30]:
+        name = re.sub(r'[\\/:*?"<>|]+', " ", Path(f.filename or "").name).strip()
+        if Path(name).suffix.lower() not in MUSIC_EXT:
+            continue
+        f.save(music_dir() / mood / name)
+        saved += 1
+    if not saved:
+        return jsonify(error="Chỉ nhận file nhạc mp3, m4a, wav, ogg, aac, flac."), 400
+    return jsonify(moods=MUSIC_MOODS, tracks=music_list(), saved=saved)
+
+
+@app.delete("/api/music/<mood>/<name>")
+def del_music(mood, name):
+    if mood not in MUSIC_MOODS:
+        abort(404)
+    f = music_dir() / mood / Path(name).name
+    f.unlink(missing_ok=True)
+    return jsonify(moods=MUSIC_MOODS, tracks=music_list())
+
+
+@app.get("/api/music/file/<mood>/<name>")
+def music_file(mood, name):
+    if mood not in MUSIC_MOODS:
+        abort(404)
+    return send_from_directory(music_dir() / mood, Path(name).name)
+
+
+# ------------------------------------------------------------------ thống kê video đã đăng
+STATS_TTL = 15 * 60  # mỗi video lấy số liệu lại tối đa 15 phút / lần
+stats_state = {"running": False, "at": 0}
+
+
+def stats_rows():
+    rows = []
+    with lock:
+        for j in jobs.values():
+            for p in j.get("posts") or []:
+                if p.get("status") != "done":
+                    continue
+                rows.append({"job": j["id"], "post": p["id"], "title": p.get("title") or job_title(j),
+                             "platform": p.get("platform"), "account": p.get("account"), "url": p.get("url", ""),
+                             "posted": p.get("finished") or p.get("created"), "part": p.get("part"),
+                             "privacy": p.get("privacy"), "has_id": bool(p.get("ext_id")),
+                             "stats": p.get("stats") or {}})
+    return sorted(rows, key=lambda r: -(r["posted"] or 0))
+
+
+def refresh_stats(force=False):
+    """Lấy số liệu mới cho các video đã đăng (lần lượt, ở luồng riêng)."""
+    stats_state.update(running=True)
+    try:
+        with lock:
+            todo = [(j, p) for j in jobs.values() for p in (j.get("posts") or [])
+                    if p.get("status") == "done" and p.get("ext_id")
+                    and (force or time.time() - (p.get("stats") or {}).get("at", 0) > STATS_TTL)]
+        touched = set()
+        for j, p in todo:
+            try:
+                st = social.stats(p["account_id"], p["ext_id"])
+                st["at"] = time.time()
+                p["stats"] = st
+            except Exception as e:
+                p["stats"] = {**(p.get("stats") or {}), "error": str(e)[:200], "at": time.time()}
+            touched.add(j["id"])
+        for jid in touched:
+            save(jobs[jid])
+    finally:
+        stats_state.update(running=False, at=time.time())
+
+
+@app.get("/api/stats")
+def get_stats():
+    return jsonify(rows=stats_rows(), running=stats_state["running"], at=stats_state["at"])
+
+
+@app.post("/api/stats/refresh")
+def post_stats_refresh():
+    if not stats_state["running"]:
+        force = bool((request.get_json(silent=True) or {}).get("force"))
+        threading.Thread(target=refresh_stats, args=(force,), daemon=True).start()
+        stats_state["running"] = True
+    return jsonify(running=True)
+
+
+@app.get("/api/glossary")
+def get_glossary():
+    return jsonify(text=read_config().get("glossary") or "")
+
+
+@app.post("/api/glossary")
+def set_glossary():
+    """Bảng tên riêng: mỗi dòng "tên gốc = tên Việt"."""
+    text = str((request.get_json(force=True) or {}).get("text") or "")
+    lines = [re.sub(r"\s*=\s*", " = ", ln.strip(), count=1) for ln in text.splitlines() if "=" in ln]
+    cfg = read_config()
+    cfg["glossary"] = "\n".join(ln for ln in lines if ln.split("=", 1)[0].strip() and ln.split("=", 1)[1].strip())[:20000]
+    write_config(cfg)
+    return jsonify(text=cfg["glossary"], count=len([x for x in cfg["glossary"].splitlines() if x]))
 
 
 @app.get("/api/telegram")

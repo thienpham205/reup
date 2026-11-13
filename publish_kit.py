@@ -341,7 +341,8 @@ def _overlay_text(out, box, words, style, badge, top=SAFE):
         size = int((W * 0.135) if tall else (H * 0.155))
         top_gap = tall and box[1] > H * 0.2  # khổ dọc có khoảng nền mờ phía trên ảnh
         if top_gap:  # chữ phải vừa khoảng trống đó: tối đa 3 dòng, cỡ theo chiều cao còn lại
-            size = min(size, int((box[1] - H * (top + 0.03)) / (3 * 1.2)))
+            # khối chữ cao ~ (số dòng x 1,14 + 1,3) x cỡ chữ (kể cả đệm + bóng) -> phải lọt khoảng trống trên ảnh
+            size = min(size, int((box[1] - H * (top + 0.02)) / (3 * 1.14 + 1.3)))
         font, size, lines = _fit_text(words, int(W * (0.88 if tall else 0.86)), 3 if top_gap else 4 if tall else 3, size)
         lines = _auto_hl(lines)
         if style == "hop":
@@ -617,6 +618,41 @@ def _brand_cfg():
         return None
 
 
+def part_cover_name(k, tiktok=False):
+    return f"parts/cover{k:02}{'_tiktok' if tiktok else ''}.jpg"
+
+
+def _part_covers(job_dir, kit, frames, idx, band, logo, spot, rm):
+    """Video đã cắt nhiều phần: mỗi phần một bộ bìa (thường + TikTok) có nhãn "TẬP k", khung hình lấy trong phần đó."""
+    try:
+        import postfx
+
+        parts = postfx.load_parts(job_dir)
+    except Exception:
+        parts = []
+    if not parts:
+        return
+    style = kit.get("style", "noi")
+    for part in parts:
+        inside = [i for i, f in enumerate(frames) if part["start"] <= f["t"] < part["end"]]
+        if inside:
+            frame = job_dir / frames[max(inside, key=lambda i: frames[i]["score"])]["file"]
+        else:  # không có khung đã chấm điểm trong phần này -> lấy khung giữa phần
+            frame = job_dir / "parts" / f"_f{part['k']:02}.jpg"
+            goc = next(iter(job_dir.glob("*.goc.mp4")), None)
+            if not frame.is_file() and goc:
+                _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{(part['start'] + part['end']) / 2:.2f}",
+                      "-i", str(goc), "-frames:v", "1", "-q:v", "2", str(frame)])
+            if not frame.is_file():
+                frame = job_dir / frames[idx]["file"]
+        badge = f"Tập {part['k']}"
+        for tik in (False, True):
+            make_cover(frame, job_dir / part_cover_name(part["k"], tik), kit.get("cover_text", ""),
+                       (style if style in ("noi", "poster", "hop") else "noi") if tik else style,
+                       ratio="doc" if tik else kit.get("ratio", "auto"), badge=badge, band=band,
+                       logo=logo, logo_spot=spot, rm_spot=rm)
+
+
 def render_cover(job_dir, kit):
     """Vẽ lại cover.jpg theo kit['frame'], kit['cover_text'], kit['style']."""
     job_dir = Path(job_dir)
@@ -651,6 +687,7 @@ def render_cover(job_dir, kit):
                style if style in ("noi", "poster", "hop") else "noi", ratio="doc",
                badge=kit.get("badge", DEFAULT_BADGE), band=band, logo=logo, logo_spot=spot, rm_spot=rm)
     kit["frame"], kit["cover"], kit["cover_tiktok"] = idx, COVER_FILE, TIKTOK_COVER
+    _part_covers(job_dir, kit, frames, idx, band, logo, spot, rm)
     return kit["cover"]
 
 

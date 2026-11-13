@@ -51,7 +51,7 @@ PLATFORMS = {
         "console": "https://developers.tiktok.com/apps/",
         "auth_url": "https://www.tiktok.com/v2/auth/authorize/",
         "token_url": "https://open.tiktokapis.com/v2/oauth/token/",
-        "scopes": ["user.info.basic", "video.upload", "video.publish"],
+        "scopes": ["user.info.basic", "video.upload", "video.publish", "video.list"],
     },
 }
 
@@ -464,7 +464,7 @@ def _yt_upload(acc, video, title, desc, tags, cover, privacy, cb):
     finally:
         up.close()
     vid = _json(r)["id"]
-    out = {"url": f"https://youtu.be/{vid}", "note": ""}
+    out = {"url": f"https://youtu.be/{vid}", "note": "", "id": vid}
     if cover and Path(cover).is_file():  # kênh chưa xác minh số điện thoại sẽ bị từ chối ảnh bìa, không coi là lỗi
         try:
             _json(requests.post("https://www.googleapis.com/upload/youtube/v3/thumbnails/set", timeout=120,
@@ -489,7 +489,7 @@ def _fb_upload(acc, video, title, desc, tags, cover, privacy, cb):
     finally:
         for f in files.values():
             f[1].close()
-    return {"url": f"https://www.facebook.com/{acc['external_id']}/videos/{data['id']}",
+    return {"url": f"https://www.facebook.com/{acc['external_id']}/videos/{data['id']}", "id": data["id"],
             "note": "" if privacy == "public" else "Video ở dạng chưa công bố, vào Trang để công bố."}
 
 
@@ -534,9 +534,54 @@ def _tt_upload(acc, video, title, desc, tags, cover_ms, privacy, cb):
         if st.get("status") == "FAILED":
             raise SocialError(f"TikTok báo lỗi: {st.get('fail_reason') or 'không rõ'}")
         if st.get("status") == "PUBLISH_COMPLETE":
-            return {"url": "", "note": note or "Đã đăng. Mở ứng dụng TikTok để xem video."}
+            ids = st.get("publicaly_available_post_id") or st.get("publicly_available_post_id") or []
+            return {"url": "", "note": note or "Đã đăng. Mở ứng dụng TikTok để xem video.",
+                    "id": str(ids[0]) if ids else ""}
     return {"url": "", "note": (note + " " if note else "")
             + "Đã tải lên, TikTok vẫn đang xử lý. Kiểm tra lại trong ứng dụng TikTok."}
+
+
+def stats(aid, ext_id):
+    """Lượt xem / thích / bình luận của một video đã đăng. Trả về {views, likes, comments}; lỗi -> SocialError."""
+    try:
+        acc = _fresh_account(aid)
+        p = acc["platform"]
+        if p == "youtube":
+            items = _json(requests.get("https://www.googleapis.com/youtube/v3/videos", timeout=TIMEOUT,
+                                       params={"part": "statistics", "id": ext_id},
+                                       headers={"Authorization": f"Bearer {acc['access_token']}"})).get("items") or []
+            if not items:
+                raise SocialError("Không thấy video trên YouTube (đã bị xoá?)")
+            st = items[0]["statistics"]
+            return {"views": int(st.get("viewCount", 0)), "likes": int(st.get("likeCount", 0)),
+                    "comments": int(st.get("commentCount", 0))}
+        if p == "facebook":
+            d = _json(requests.get(f"https://graph.facebook.com/v19.0/{ext_id}", timeout=TIMEOUT, params={
+                "access_token": acc["access_token"],
+                "fields": "views,likes.summary(true).limit(0),comments.summary(true).limit(0)"}))
+            views = d.get("views")
+            if views is None:  # một số loại video chỉ có số liệu trong video_insights
+                ins = _json(requests.get(f"https://graph.facebook.com/v19.0/{ext_id}/video_insights", timeout=TIMEOUT,
+                                         params={"access_token": acc["access_token"], "metric": "total_video_views"}))
+                vals = ((ins.get("data") or [{}])[0].get("values") or [{}])
+                views = vals[0].get("value", 0)
+            return {"views": int(views or 0), "likes": int(((d.get("likes") or {}).get("summary") or {}).get("total_count", 0)),
+                    "comments": int(((d.get("comments") or {}).get("summary") or {}).get("total_count", 0))}
+        r = requests.post("https://open.tiktokapis.com/v2/video/query/", timeout=TIMEOUT,
+                          params={"fields": "id,view_count,like_count,comment_count,share_count"},
+                          headers={"Authorization": f"Bearer {acc['access_token']}",
+                                   "Content-Type": "application/json; charset=UTF-8"},
+                          json={"filters": {"video_ids": [ext_id]}})
+        if r.status_code in (401, 403) or "scope" in r.text.lower():
+            raise SocialError("Cần liên kết lại TikTok để cấp thêm quyền xem thống kê (video.list).")
+        vids = ((_json(r).get("data") or {}).get("videos")) or []
+        if not vids:
+            raise SocialError("TikTok chưa trả số liệu (video riêng tư hoặc đang xử lý)")
+        v = vids[0]
+        return {"views": int(v.get("view_count", 0)), "likes": int(v.get("like_count", 0)),
+                "comments": int(v.get("comment_count", 0)), "shares": int(v.get("share_count", 0))}
+    except (requests.RequestException, KeyError, ValueError, TypeError) as e:
+        raise SocialError(f"{type(e).__name__}: {str(e)[:200]}")
 
 
 def publish(aid, video, title, desc, tags, cover=None, cover_ms=None, privacy="private", progress=None):
