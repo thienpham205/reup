@@ -37,7 +37,19 @@ Key được lưu trong `config.json` cạnh tool (đã nằm trong `.gitignore`
 
 ## Cách dùng
 
-### Giao diện web (dễ nhất)
+### App trên máy (dễ nhất)
+
+Chạy một lần `python tao-loi-tat.py`: tạo lối tắt **Lồng Tiếng Việt** trên Desktop và trong menu Start
+(biểu tượng lấy từ logo kênh `brand/logo.png`, bo tròn). Bấm vào là tool mở trong cửa sổ riêng,
+không cần trình duyệt và không có cửa sổ đen:
+
+- Server tự bật ngầm khi mở app và tự tắt khi đóng app. Nếu đang có video đang làm, bài đang đăng
+  hoặc bài hẹn giờ, app hỏi lại trước khi đóng.
+- Nút tải video / ảnh bìa lưu vào thư mục Downloads. Liên kết ra ngoài (liên kết tài khoản, xem bài đã đăng) mở bằng trình duyệt.
+- Nhật ký server ghi vào `app.log`. Lựa chọn đã lưu của app nằm trong `.app-profile/` (cả hai không đưa lên git).
+- Cần `pip install pywebview` (dùng WebView2 có sẵn trên Windows 10/11).
+
+### Giao diện web
 
 Nhấp đúp `mo-web.bat`. Trình duyệt sẽ tự mở trang http://localhost:5577:
 
@@ -197,6 +209,18 @@ khoảng 2 phút).
 - Lần đầu tool tự cài VieNeu vào môi trường Python riêng `<thư mục dữ liệu>/models/vieneu-venv` (~1 GB), không đụng
   tới thư viện của tool. Câu nào VieNeu lỗi thì tự đọc bằng Edge.
 - Video đã làm xong: thẻ **Làm tiếp ⟳** → bật **Lồng lại giọng đọc** → chọn **VieNeu ✨**.
+
+## Nghe thử giọng trước khi chọn
+
+Dưới phần **Bộ đọc**, bấm **🎧 Nghe thử các giọng** để mở danh sách giọng của bộ đọc đang chọn. Bấm ▶ để nghe câu mẫu,
+bấm **Chọn** để dùng giọng đó cho nhân vật chính, hoặc chọn **Tự chọn theo nhân vật**. Gõ câu của bạn vào ô phía trên
+nếu muốn nghe giọng đọc chính câu đó.
+
+- Mẫu được lưu ở `<thư mục dữ liệu>/voice_samples/`, nên lần sau bấm là nghe ngay. Giọng nào có chấm xanh là đã có mẫu.
+- VieNeu: lần nghe thử đầu tiên tạo mẫu cho cả 25 giọng trong một lần, mất khoảng 1 phút.
+- Edge, Edge nhiều giọng, Piper: miễn phí. Gemini dùng 1 lượt TTS cho mỗi giọng mới nghe. ElevenLabs tốn khoảng 50 credit
+  cho mỗi giọng mới nghe (đọc bằng model Flash). Nghe lại thì không tốn.
+- Edge + Piper, Piper, Edge nhiều giọng: tool tự phân giọng cho từng vai nên chỉ có nghe thử, không có nút chọn.
 
 ## Thêm giọng: Edge nhiều giọng
 

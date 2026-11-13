@@ -753,6 +753,36 @@ def eleven_voices():
     return jsonify(ok=True, voices=vs, used=c[0] if c else None, limit=c[1] if c else None)
 
 
+@app.get("/api/voices/<engine>")
+def voice_catalog(engine):
+    """Danh sách giọng của một bộ đọc để nghe thử, kèm giọng nào đã có mẫu sẵn."""
+    import voice_preview
+
+    if engine not in voice_preview.ENGINES:
+        abort(404)
+    try:
+        vs = voice_preview.catalog(engine)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:300]), 400
+    ready = set(voice_preview.has(engine, [v["id"] for v in vs], request.args.get("text", "")))
+    for v in vs:
+        v["ready"] = v["id"] in ready
+    return jsonify(ok=True, voices=vs, sample=voice_preview.SAMPLE, cost=voice_preview.COST.get(engine, ""))
+
+
+@app.get("/api/voices/<engine>/sample")
+def voice_sample(engine):
+    import voice_preview
+
+    if engine not in voice_preview.ENGINES or not request.args.get("voice"):
+        abort(404)
+    try:
+        f = voice_preview.sample(engine, request.args["voice"], request.args.get("text", ""))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:300]), 400
+    return send_from_directory(f.parent, f.name, max_age=0)
+
+
 @app.post("/api/config/test")
 def test_config():
     sys.path.insert(0, str(ROOT))

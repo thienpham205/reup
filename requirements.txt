@@ -10,3 +10,4 @@ playwright
 flask
 Pillow
 piper-tts  # giọng đọc mã nguồn mở, chạy offline (tuỳ chọn Piper / Edge + Piper)
+pywebview  # app trên máy: mở tool trong cửa sổ riêng (app.pyw)

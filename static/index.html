@@ -120,6 +120,23 @@ details.adv[open] summary{margin-bottom:12px}
 .badge.warn,.badge.scheduled{background:var(--warn-soft);color:var(--warn)}
 .empty{color:var(--muted);font-size:13.5px;padding:6px 2px}
 .err{background:var(--err-soft);color:var(--err);border-radius:12px;padding:12px 14px;font-size:14px;margin-bottom:14px;word-break:break-word}
+/* nghe thử giọng */
+.vpTop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.vpPanel{margin-top:8px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--panel2)}
+.vpList{max-height:340px;overflow:auto;margin-top:6px;padding-right:2px}
+.vpg{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin:10px 2px 4px}
+.vpg:first-child{margin-top:2px}
+.vpc{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:5px}
+.vpc.on{border-color:var(--accent);background:var(--accent-soft)}
+.vpPlay{width:32px;height:32px;border-radius:50%;border:0;background:var(--panel3);color:var(--text);cursor:pointer;flex:none;display:grid;place-items:center}
+.vpPlay:hover{background:var(--accent);color:#fff}
+.vpPlay.play{background:var(--accent);color:#fff}
+.vpPlay .spin{width:16px;height:16px;border-width:2px}
+.vpn{flex:1;min-width:0;cursor:default}
+.vpn b{display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vpn small{display:block;color:var(--muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vpOn{font-size:11.5px;color:var(--accent);font-weight:700;white-space:nowrap}
+.vpDot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
 .spin{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--panel3);border-top-color:var(--accent);animation:rot .8s linear infinite;flex:none}
 @keyframes rot{to{transform:rotate(360deg)}}
 .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);background:var(--text);color:var(--bg);padding:9px 16px;border-radius:30px;font-size:13.5px;font-weight:500;opacity:0;pointer-events:none;transition:.2s;z-index:20}
@@ -336,6 +353,13 @@ video{width:100%;max-height:560px;border-radius:14px;background:#000;display:blo
                 <label class="t">Bộ đọc</label>
                 <div class="seg" data-name="tts"><button type="button" data-v="vieneu" class="on">VieNeu ✨</button><button type="button" data-v="edge">Edge</button><button type="button" data-v="edgeplus">Edge nhiều giọng</button><button type="button" data-v="mix">Edge + Piper</button><button type="button" data-v="piper">Piper</button><button type="button" data-v="gemini">Gemini AI</button><button type="button" data-v="eleven">ElevenLabs</button></div>
                 <div class="hint" id="ttsHint">Giọng Việt tự nhiên nhất, chạy ngay trên máy</div>
+                <div class="vpTop"><button type="button" class="btn sm" id="vpToggle" aria-expanded="false">🎧 Nghe thử các giọng</button>
+                  <span class="hint" id="vpNow" style="margin:0"></span></div>
+                <div class="vpPanel" id="vpPanel" hidden>
+                  <input class="inp" id="vpText" maxlength="200" placeholder="Gõ câu muốn nghe thử (để trống = câu mẫu)" aria-label="Câu đọc thử">
+                  <div class="hint" id="vpMsg" style="margin:6px 0 0"></div>
+                  <div class="vpList" id="vpList"></div>
+                </div>
                 <div id="elBox" style="display:none;margin-top:8px">
                   <div id="elKeyRow">
                     <input id="elKey" class="inp" type="password" autocomplete="off" placeholder="Dán API key ElevenLabs" aria-label="API key ElevenLabs">
@@ -901,6 +925,112 @@ async function loadStats(refresh, force){
 }
 $("#stReload").onclick = () => loadStats(true, true);
 $("#stPlat").onchange = $("#stSort").onchange = renderStats;
+
+/* ---------- nghe thử giọng đọc ---------- */
+const VP_SEL = {vieneu: "#vnVoice", gemini: "#gemVoice", eleven: "#elVoice"};  // bộ đọc có ô chọn giọng riêng
+const VP_EDGE = {nam: "vi-VN-NamMinhNeural", nu: "vi-VN-HoaiMyNeural"};
+const VP_ICON = {play: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>',
+  stop: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>'};
+const vp = {data: {}, audio: null, id: null, state: "", open: store("opt_vpopen") === "1", err: {}};
+const vpEngine = () => segVal("tts");
+const vpText = () => $("#vpText").value.trim();
+function vpPickable(e){ return !!VP_SEL[e] || e === "edge"; }
+function vpCurrent(e){
+  if (VP_SEL[e]) return $(VP_SEL[e]).value;
+  if (e === "edge") return VP_EDGE[segVal("voice2")] || "";
+  return null;
+}
+function vpPick(e, id){
+  if (VP_SEL[e]) { const s = $(VP_SEL[e]); s.value = id; s.dispatchEvent(new Event("change")); }
+  else if (e === "edge") document.querySelector(`.seg[data-name=voice2] [data-v="${Object.keys(VP_EDGE).find(k => VP_EDGE[k] === id) || "auto"}"]`).click();
+  vpRender();
+}
+function vpNow(){
+  const e = vpEngine(), cur = vpCurrent(e), list = vp.data[e] || [];
+  if (cur === null) { $("#vpNow").textContent = "Tool tự phân giọng cho từng vai"; return; }
+  const v = list.find(x => x.id === cur);
+  $("#vpNow").textContent = cur ? `Đang dùng: ${v ? v.name : cur}` : "Đang dùng: tự chọn theo nhân vật";
+}
+function vpRender(){
+  vpNow();
+  $("#vpPanel").hidden = !vp.open; $("#vpToggle").setAttribute("aria-expanded", vp.open);
+  $("#vpToggle").textContent = vp.open ? "🎧 Ẩn danh sách giọng" : "🎧 Nghe thử các giọng";
+  if (!vp.open) return;
+  const e = vpEngine(), list = vp.data[e], cur = vpCurrent(e), pick = vpPickable(e);
+  if (vp.err[e]) { $("#vpList").innerHTML = `<div class="empty" style="color:var(--err)">${esc(vp.err[e])}</div>`; return; }
+  if (!list) { $("#vpList").innerHTML = '<div class="row" style="padding:8px"><div class="spin"></div><span class="hint" style="margin:0">Đang lấy danh sách giọng…</span></div>'; return; }
+  let html = "", g = null;
+  if (pick) html += `<div class="vpc${cur ? "" : " on"}"><div class="vpn"><b>Tự chọn theo nhân vật</b><small>Mỗi vai một giọng hợp giới tính / tuổi</small></div>
+    ${cur ? '<button type="button" class="btn ghost sm" data-vpick="">Chọn</button>' : '<span class="vpOn">✓ Đang dùng</span>'}</div>`;
+  list.forEach(v => {
+    if (v.group !== g) { g = v.group; html += `<div class="vpg">${esc(g)}</div>`; }
+    const on = pick && cur === v.id, me = vp.id === v.id;
+    const icon = me && vp.state === "load" ? '<div class="spin"></div>' : me && vp.state === "play" ? VP_ICON.stop : VP_ICON.play;
+    html += `<div class="vpc${on ? " on" : ""}">
+      <button type="button" class="vpPlay${me && vp.state === "play" ? " play" : ""}" data-vplay="${esc(v.id)}" aria-label="${me && vp.state === "play" ? "Dừng" : "Nghe thử"} ${esc(v.name)}">${icon}</button>
+      <div class="vpn"><b>${esc(v.name)}</b><small>${esc(v.desc)}</small></div>
+      ${v.ready ? '<span class="vpDot" title="Đã có mẫu, bấm là nghe ngay"></span>' : ""}
+      ${!pick ? "" : on ? '<span class="vpOn">✓ Đang dùng</span>' : `<button type="button" class="btn ghost sm" data-vpick="${esc(v.id)}">Chọn</button>`}</div>`;
+  });
+  $("#vpList").innerHTML = html;
+  $$("#vpList [data-vplay]").forEach(b => b.onclick = () => vpPlay(e, b.dataset.vplay));
+  $$("#vpList [data-vpick]").forEach(b => b.onclick = () => vpPick(e, b.dataset.vpick));
+}
+async function vpLoad(force){
+  const e = vpEngine();
+  if (!force && (vp.data[e] || vp.err[e])) return vpRender();
+  delete vp.err[e]; vpRender();
+  try {
+    const r = await fetch(`/api/voices/${e}?text=${encodeURIComponent(vpText())}`), j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Không lấy được danh sách giọng");
+    vp.data[e] = j.voices; vp.cost = vp.cost || {}; vp.cost[e] = j.cost;
+    if (!$("#vpText").placeholder.includes("“")) $("#vpText").placeholder = `Câu mẫu: “${j.sample}” — gõ câu khác nếu muốn`;
+  } catch(err){ vp.err[e] = err.message; }
+  if (vpEngine() === e) { $("#vpMsg").textContent = vpCostMsg(e); vpRender(); }
+}
+function vpCostMsg(e){  // VieNeu đã có mẫu đủ 25 giọng thì không cần nhắc "lần đầu"
+  const list = vp.data[e] || [];
+  if (e === "vieneu" && list.length && list.every(v => v.ready)) return "Chấm xanh = đã có mẫu, bấm là nghe ngay.";
+  return (vp.cost && vp.cost[e]) || "";
+}
+function vpStop(){ if (vp.audio) { vp.audio.pause(); vp.audio = null; } vp.id = null; vp.state = ""; }
+async function vpPlay(e, id){
+  if (vp.id === id) { vpStop(); return vpRender(); }
+  vpStop(); vp.id = id; vp.state = "load"; vpRender();
+  const item = (vp.data[e] || []).find(v => v.id === id);
+  if (e === "vieneu" && item && !item.ready) $("#vpMsg").textContent = "Đang tạo mẫu VieNeu… lần đầu mất khoảng 30–60 giây (nạp model), các giọng còn lại được tạo luôn trong lúc bạn nghe.";
+  try {
+    const r = await fetch(`/api/voices/${e}/sample?voice=${encodeURIComponent(id)}&text=${encodeURIComponent(vpText())}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `Lỗi ${r.status}`);
+    const blob = await r.blob();
+    if (vp.id !== id) return;  // đã bấm giọng khác trong lúc chờ
+    if (item) item.ready = true;
+    const a = new Audio(URL.createObjectURL(blob)); vp.audio = a; vp.state = "play";
+    a.onended = () => { if (vp.audio === a) { vpStop(); vpRender(); } };
+    $("#vpMsg").textContent = vpCostMsg(e);
+    vpRender(); await a.play();
+    if (e === "vieneu" && !vpText()) setTimeout(() => vpRefreshReady(e), 4000);
+  } catch(err){
+    if (vp.id === id) { vpStop(); vpRender(); }
+    $("#vpMsg").innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`;
+  }
+}
+async function vpRefreshReady(e){  // VieNeu tạo dần các giọng còn lại -> cập nhật chấm xanh "nghe ngay"
+  try { const j = await fetch(`/api/voices/${e}`).then(r => r.json()); if (!j.ok) return;
+    const ready = new Set(j.voices.filter(v => v.ready).map(v => v.id));
+    (vp.data[e] || []).forEach(v => v.ready = ready.has(v.id));
+    if (vpEngine() === e) vpRender();
+    if (ready.size < j.voices.length && vp.open) setTimeout(() => vpRefreshReady(e), 6000);
+  } catch(err){}
+}
+$("#vpToggle").onclick = () => { vp.open = !vp.open; store("opt_vpopen", vp.open ? "1" : "0"); if (!vp.open) vpStop(); vp.open ? vpLoad() : vpRender(); };
+let vpTextT;
+$("#vpText").addEventListener("input", () => { clearTimeout(vpTextT); vpTextT = setTimeout(() => { vpStop(); vpLoad(true); }, 600); });
+$$(".seg[data-name=tts] button").forEach(b => b.addEventListener("click", () => { vpStop(); $("#vpMsg").textContent = ""; vp.open ? vpLoad() : vpRender(); }));
+$$(".seg[data-name=voice2] button").forEach(b => b.addEventListener("click", () => vpRender()));
+["#vnVoice", "#gemVoice", "#elVoice"].forEach(s => $(s).addEventListener("change", () => vpRender()));
+$("#vnVoice").value = store("opt_vnvoice") || ""; $("#vnVoice").addEventListener("change", e => store("opt_vnvoice", e.target.value));
+vp.open ? vpLoad() : vpRender();
 
 /* ---------- thư viện nhạc nền ---------- */
 function showMusic(d){
